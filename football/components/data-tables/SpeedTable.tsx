@@ -15,7 +15,7 @@ export type SpeedRow = {
   weekStart: string;
   sprint10m: number | null;
   sprint30m: number | null;
-  sprint100m: number | null;
+  illinoisRunSec: number | null;
 };
 
 const columnHelper = createColumnHelper<SpeedRow>();
@@ -31,7 +31,7 @@ export function SpeedTable({ initialRows }: { initialRows: SpeedRow[] }) {
     weekStart: "",
     sprint10m: "",
     sprint30m: "",
-    sprint100m: "",
+    illinoisRunSec: "",
   });
   const [pick, setPick] = useState("");
 
@@ -49,8 +49,8 @@ export function SpeedTable({ initialRows }: { initialRows: SpeedRow[] }) {
         header: "30m (秒)",
         cell: (info) => numCell(info.getValue()),
       }),
-      columnHelper.accessor("sprint100m", {
-        header: "100m (秒)",
+      columnHelper.accessor("illinoisRunSec", {
+        header: "伊利诺斯跑 (秒)",
         cell: (info) => numCell(info.getValue()),
       }),
       columnHelper.display({
@@ -91,7 +91,7 @@ export function SpeedTable({ initialRows }: { initialRows: SpeedRow[] }) {
         weekStart: row.weekStart,
         sprint10m: row.sprint10m != null ? String(row.sprint10m) : "",
         sprint30m: row.sprint30m != null ? String(row.sprint30m) : "",
-        sprint100m: row.sprint100m != null ? String(row.sprint100m) : "",
+        illinoisRunSec: row.illinoisRunSec != null ? String(row.illinoisRunSec) : "",
       });
     }
   }
@@ -173,13 +173,13 @@ export function SpeedTable({ initialRows }: { initialRows: SpeedRow[] }) {
             />
           </label>
           <label className="flex flex-col gap-1 text-xs text-slate-600">
-            100m (秒)
+            伊利诺斯跑 (秒)
             <input
               type="number"
               step="0.01"
               className="rounded border border-slate-200 px-2 py-1.5 text-sm text-slate-900"
-              value={draft.sprint100m}
-              onChange={(e) => setDraft((d) => ({ ...d, sprint100m: e.target.value }))}
+              value={draft.illinoisRunSec}
+              onChange={(e) => setDraft((d) => ({ ...d, illinoisRunSec: e.target.value }))}
             />
           </label>
         </div>
@@ -196,8 +196,8 @@ export function SpeedTable({ initialRows }: { initialRows: SpeedRow[] }) {
             const ws = normalizeToWeekMonday(week);
             const n = (s: string) => (s.trim() === "" ? null : Number(s));
             startTransition(async () => {
-              await upsertSpeedRow(ws, n(draft.sprint10m), n(draft.sprint30m), n(draft.sprint100m));
-              setDraft({ weekStart: "", sprint10m: "", sprint30m: "", sprint100m: "" });
+              await upsertSpeedRow(ws, n(draft.sprint10m), n(draft.sprint30m), n(draft.illinoisRunSec));
+              setDraft({ weekStart: "", sprint10m: "", sprint30m: "", illinoisRunSec: "" });
               setPick("");
               router.refresh();
             });

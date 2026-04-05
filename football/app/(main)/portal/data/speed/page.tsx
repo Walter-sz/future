@@ -14,7 +14,7 @@ export default async function SpeedDataPage() {
     weekStart: r.weekStart,
     sprint10m: r.sprint10m,
     sprint30m: r.sprint30m,
-    sprint100m: r.sprint100m,
+    illinoisRunSec: r.illinoisRunSec,
   }));
 
   return (

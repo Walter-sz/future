@@ -11,7 +11,7 @@ export const weeklySpeed = sqliteTable("weekly_speed", {
   weekStart: text("week_start").primaryKey(),
   sprint10m: real("sprint_10m"),
   sprint30m: real("sprint_30m"),
-  sprint100m: real("sprint_100m"),
+  illinoisRunSec: real("illinois_run_sec"),
   updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
 });
 

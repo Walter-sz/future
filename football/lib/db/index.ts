@@ -14,6 +14,19 @@ function getDbPath(): string {
   return path.join(dir, "app.db");
 }
 
+function migrateWeeklySpeedIllinoisRun(raw: Database.Database) {
+  try {
+    const rows = raw.prepare("PRAGMA table_info(weekly_speed)").all() as { name: string }[];
+    if (rows.length === 0) return;
+    const names = new Set(rows.map((r) => r.name));
+    if (names.has("sprint_100m") && !names.has("illinois_run_sec")) {
+      raw.exec(`ALTER TABLE weekly_speed RENAME COLUMN sprint_100m TO illinois_run_sec`);
+    }
+  } catch {
+    /* SQLite 版本过旧等 */
+  }
+}
+
 function ensureSchema(raw: Database.Database) {
   if (globalForDb.__bootstrapped) return;
   raw.exec(`
@@ -27,7 +40,7 @@ function ensureSchema(raw: Database.Database) {
       week_start TEXT PRIMARY KEY NOT NULL,
       sprint_10m REAL,
       sprint_30m REAL,
-      sprint_100m REAL,
+      illinois_run_sec REAL,
       updated_at INTEGER NOT NULL
     );
     CREATE TABLE IF NOT EXISTS weekly_activity (
@@ -51,6 +64,7 @@ function ensureSchema(raw: Database.Database) {
       updated_at INTEGER NOT NULL
     );
   `);
+  migrateWeeklySpeedIllinoisRun(raw);
   const now = Date.now();
   raw
     .prepare(

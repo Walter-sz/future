@@ -1,12 +1,7 @@
 "use server";
 
 import { getDb, getRawSqlite } from "@/lib/db";
-import {
-  weeklyAnthropometric,
-  weeklySpeed,
-  weeklyActivity,
-  shortTermGoal,
-} from "@/lib/db/schema";
+import { weeklyAnthropometric, weeklySpeed, shortTermGoal } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 
@@ -44,16 +39,16 @@ export async function upsertSpeedRow(
   weekStart: string,
   sprint10m: number | null,
   sprint30m: number | null,
-  sprint100m: number | null
+  illinoisRunSec: number | null
 ) {
   const db = getDb();
   const now = new Date();
   await db
     .insert(weeklySpeed)
-    .values({ weekStart, sprint10m, sprint30m, sprint100m, updatedAt: now })
+    .values({ weekStart, sprint10m, sprint30m, illinoisRunSec, updatedAt: now })
     .onConflictDoUpdate({
       target: weeklySpeed.weekStart,
-      set: { sprint10m, sprint30m, sprint100m, updatedAt: now },
+      set: { sprint10m, sprint30m, illinoisRunSec, updatedAt: now },
     });
   revalidatePortal();
 }
@@ -61,29 +56,6 @@ export async function upsertSpeedRow(
 export async function deleteSpeedRow(weekStart: string) {
   const db = getDb();
   await db.delete(weeklySpeed).where(eq(weeklySpeed.weekStart, weekStart));
-  revalidatePortal();
-}
-
-export async function upsertActivityRow(
-  weekStart: string,
-  trainingCount: number | null,
-  matchCount: number | null
-) {
-  const db = getDb();
-  const now = new Date();
-  await db
-    .insert(weeklyActivity)
-    .values({ weekStart, trainingCount, matchCount, updatedAt: now })
-    .onConflictDoUpdate({
-      target: weeklyActivity.weekStart,
-      set: { trainingCount, matchCount, updatedAt: now },
-    });
-  revalidatePortal();
-}
-
-export async function deleteActivityRow(weekStart: string) {
-  const db = getDb();
-  await db.delete(weeklyActivity).where(eq(weeklyActivity.weekStart, weekStart));
   revalidatePortal();
 }
 
@@ -104,7 +76,7 @@ export async function upsertScheduleCell(
          updated_at = excluded.updated_at`
     )
     .run({ weekStart, weekday, hour, label, now });
-  revalidatePath("/");
+  revalidatePortal();
 }
 
 export async function saveShortTermGoal(content: string) {

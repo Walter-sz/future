@@ -2,11 +2,15 @@ import { getDb } from "@/lib/db";
 import {
   weeklyAnthropometric,
   weeklySpeed,
-  weeklyActivity,
   scheduleSlot,
   shortTermGoal,
 } from "@/lib/db/schema";
-import { eq, inArray, asc } from "drizzle-orm";
+import {
+  countMatchSessionsFromScheduleCells,
+  countTrainingSessionsFromScheduleCells,
+  scheduleCellsFromSlotRows,
+} from "@/lib/schedule-activity";
+import { eq, inArray } from "drizzle-orm";
 import { addWeeks, getWeekMonday } from "@/lib/week";
 
 const CHART_RECENT_WEEKS = 24;
@@ -26,15 +30,15 @@ function buildRecentWeekStarts(): string[] {
 export async function resolveChartWeekStarts(): Promise<string[]> {
   const db = getDb();
   const recent = buildRecentWeekStarts();
-  const [a, s, ac] = await Promise.all([
+  const [a, s, sch] = await Promise.all([
     db.select({ w: weeklyAnthropometric.weekStart }).from(weeklyAnthropometric),
     db.select({ w: weeklySpeed.weekStart }).from(weeklySpeed),
-    db.select({ w: weeklyActivity.weekStart }).from(weeklyActivity),
+    db.selectDistinct({ w: scheduleSlot.weekStart }).from(scheduleSlot),
   ]);
   const set = new Set<string>(recent);
   for (const r of a) set.add(r.w);
   for (const r of s) set.add(r.w);
-  for (const r of ac) set.add(r.w);
+  for (const r of sch) set.add(r.w);
   const sorted = Array.from(set).sort();
   if (sorted.length > CHART_MAX_WEEKS) return sorted.slice(-CHART_MAX_WEEKS);
   return sorted;
@@ -56,13 +60,15 @@ export type SpeedPoint = {
   week: string;
   sprint10m: number | null;
   sprint30m: number | null;
-  sprint100m: number | null;
+  illinoisRunSec: number | null;
 };
 
 export type ActivityPoint = {
   week: string;
-  training: number | null;
-  match: number | null;
+  /** 由当周「每周时间表」中含「训练」的格子合并统计 */
+  training: number;
+  /** 由当周日程中含「比赛」的格子合并统计 */
+  match: number;
 };
 
 /** Portal 三张周曲线共用同一时间轴，并包含库中已有但不在「最近 24 周」内的数据点 */
@@ -76,14 +82,14 @@ export async function getPortalChartData(): Promise<{
     return { anthropometric: [], speed: [], activity: [] };
   }
   const db = getDb();
-  const [arows, srows, crows] = await Promise.all([
+  const [arows, srows, scheduleRows] = await Promise.all([
     db.select().from(weeklyAnthropometric).where(inArray(weeklyAnthropometric.weekStart, weeks)),
     db.select().from(weeklySpeed).where(inArray(weeklySpeed.weekStart, weeks)),
-    db.select().from(weeklyActivity).where(inArray(weeklyActivity.weekStart, weeks)),
+    db.select().from(scheduleSlot).where(inArray(scheduleSlot.weekStart, weeks)),
   ]);
   const amap = new Map(arows.map((r) => [r.weekStart, r]));
   const smap = new Map(srows.map((r) => [r.weekStart, r]));
-  const cmap = new Map(crows.map((r) => [r.weekStart, r]));
+  const cellsByWeek = scheduleCellsFromSlotRows(scheduleRows);
 
   const anthropometric = weeks.map((w) => {
     const r = amap.get(w);
@@ -99,15 +105,15 @@ export async function getPortalChartData(): Promise<{
       week: w,
       sprint10m: toFiniteNumber(r?.sprint10m),
       sprint30m: toFiniteNumber(r?.sprint30m),
-      sprint100m: toFiniteNumber(r?.sprint100m),
+      illinoisRunSec: toFiniteNumber(r?.illinoisRunSec),
     };
   });
   const activity = weeks.map((w) => {
-    const r = cmap.get(w);
+    const cells = cellsByWeek.get(w) ?? {};
     return {
       week: w,
-      training: toFiniteNumber(r?.trainingCount),
-      match: toFiniteNumber(r?.matchCount),
+      training: countTrainingSessionsFromScheduleCells(cells),
+      match: countMatchSessionsFromScheduleCells(cells),
     };
   });
 

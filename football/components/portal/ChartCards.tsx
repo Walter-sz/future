@@ -167,7 +167,7 @@ export function ChartCards({
 
   const speedOption = {
     tooltip: { trigger: "axis" as const, formatter: tipFmt },
-    legend: { data: ["10m(s)", "30m(s)", "100m(s)"], bottom: 0 },
+    legend: { data: ["10m(s)", "30m(s)", "伊利诺斯跑(s)"], bottom: 0 },
     grid: { left: 40, right: 24, top: 36, bottom: 56 },
     xAxis: { type: "category" as const, data: weekLabels, axisLabel: { fontSize: 10 } },
     yAxis: {
@@ -193,9 +193,9 @@ export function ChartCards({
         connectNulls: true,
       },
       {
-        name: "100m(s)",
+        name: "伊利诺斯跑(s)",
         type: "line" as const,
-        data: speed.map((p) => p.sprint100m),
+        data: speed.map((p) => p.illinoisRunSec),
         smooth: true,
         connectNulls: true,
       },
@@ -288,7 +288,7 @@ export function ChartCards({
           href="/portal/data/activity"
           className="mb-1 block text-center text-sm font-medium text-slate-700 hover:text-emerald-700"
         >
-          训练 / 比赛次数（周）
+          训练 / 比赛次数（周·按日程）
         </Link>
         <div className="w-full" style={{ minHeight: LINE_CHART_HEIGHT_PX }}>
           <ReactECharts
@@ -301,7 +301,7 @@ export function ChartCards({
           />
         </div>
         <Link href="/portal/data/activity" className="mt-1 block text-center text-xs text-emerald-600 hover:underline">
-          点击查看与编辑数据表
+          查看统计说明与每周数字
         </Link>
       </div>
     </div>
@@ -313,18 +313,14 @@ function padAxisFromTriple(speed: SpeedPoint[]) {
   for (const p of speed) {
     if (p.sprint10m != null) vals.push(p.sprint10m);
     if (p.sprint30m != null) vals.push(p.sprint30m);
-    if (p.sprint100m != null) vals.push(p.sprint100m);
+    if (p.illinoisRunSec != null) vals.push(p.illinoisRunSec);
   }
   if (vals.length === 0) return {};
   return padAxisExtent(Math.min(...vals), Math.max(...vals), 0.15, 0.5);
 }
 
 function padAxisFromActivity(activity: ActivityPoint[]) {
-  const vals: number[] = [];
-  for (const p of activity) {
-    if (p.training != null) vals.push(p.training);
-    if (p.match != null) vals.push(p.match);
-  }
-  if (vals.length === 0) return {};
+  if (activity.length === 0) return {};
+  const vals = activity.flatMap((p) => [p.training, p.match]);
   return padAxisExtent(Math.min(...vals), Math.max(...vals), 0.1, 1);
 }
