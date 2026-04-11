@@ -1,3 +1,8 @@
 # 本地持久化（数据库、对照图等），勿提交
 /walter_data/*
 !/walter_data/.gitkeep
+
+# Walter 门户（独立 Next 应用）
+/portal/node_modules/
+/portal/.next/
+/portal/out/

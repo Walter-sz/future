@@ -1,0 +1,10 @@
+/.dev/
+
+/node_modules
+/.next/
+/out/
+*.pem
+.env*.local
+npm-debug.log*
+.DS_Store
+*.tsbuildinfo
