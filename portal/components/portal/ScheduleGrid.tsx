@@ -157,18 +157,21 @@ export function ScheduleGrid({ weekStart, initialCells }: Props) {
           <div className="flex gap-1">
             <Link
               href={`${FOOTBALL_APP_BASE}?week=${prevWeek}`}
+              scroll={false}
               className="rounded-md border border-slate-200 px-2 py-1 hover:bg-slate-50"
             >
               上一周
             </Link>
             <Link
               href={`${FOOTBALL_APP_BASE}?week=${thisWeek}`}
+              scroll={false}
               className="rounded-md border border-slate-200 px-2 py-1 hover:bg-slate-50"
             >
               本周
             </Link>
             <Link
               href={`${FOOTBALL_APP_BASE}?week=${nextWeek}`}
+              scroll={false}
               className="rounded-md border border-slate-200 px-2 py-1 hover:bg-slate-50"
             >
               下一周

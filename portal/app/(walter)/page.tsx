@@ -1,12 +1,28 @@
+import { WalterAgentGrid } from "@/hub/agent-grid";
 import { WalterSectionGrid } from "@/hub/section-grid";
 
 export default function WalterHomePage() {
   return (
-    <div>
-      <p className="mb-8 text-sm leading-relaxed text-slate-600">
-        选择一个板块进入。小川足球为本站内的 Mike 足球管理；其余板块为预留位，后续扩展。
-      </p>
-      <WalterSectionGrid />
+    <div className="space-y-14">
+      <section aria-labelledby="sections-heading">
+        <h2 id="sections-heading" className="mb-1 text-lg font-semibold text-slate-900">
+          功能板块
+        </h2>
+        <p className="mb-6 max-w-2xl text-sm leading-relaxed text-slate-600">
+          按业务域进入各功能空间。除小川足球外，其余为预留位，后续逐步建设。
+        </p>
+        <WalterSectionGrid />
+      </section>
+
+      <section aria-labelledby="agents-heading" className="border-t border-amber-200/60 pt-14">
+        <h2 id="agents-heading" className="mb-1 text-lg font-semibold text-slate-900">
+          Agent 管理
+        </h2>
+        <p className="mb-6 max-w-2xl text-sm leading-relaxed text-slate-600">
+          每个 Agent 有独立入口，便于后续接入自动化、工具调用与对话编排；当前为占位控制台。
+        </p>
+        <WalterAgentGrid />
+      </section>
     </div>
   );
 }

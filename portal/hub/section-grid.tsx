@@ -10,6 +10,7 @@ export function WalterSectionGrid() {
         <li key={s.id}>
           <Link
             href={s.href}
+            scroll={false}
             className="flex h-full flex-col rounded-xl border border-slate-200 bg-white p-5 shadow-sm transition hover:border-amber-300/80 hover:shadow-md"
           >
             <div className="mb-2 flex items-start justify-between gap-2">
