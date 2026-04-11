@@ -2,6 +2,7 @@ import Database from "better-sqlite3";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import fs from "fs";
 import path from "path";
+import { getPersistenceRoot } from "@/lib/persistence";
 import * as schema from "./schema";
 
 const globalForDb = globalThis as unknown as {
@@ -10,7 +11,7 @@ const globalForDb = globalThis as unknown as {
 };
 
 function getDbPath(): string {
-  const dir = process.env.SQLITE_DATA_DIR ?? path.join(process.cwd(), "data");
+  const dir = process.env.SQLITE_DATA_DIR ?? getPersistenceRoot();
   return path.join(dir, "app.db");
 }
 

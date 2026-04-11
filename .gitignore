@@ -1,0 +1,3 @@
+# 本地持久化（数据库、对照图等），勿提交
+/walter_data/*
+!/walter_data/.gitkeep
