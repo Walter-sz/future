@@ -1,0 +1,23 @@
+# 豆瓣补全：每条须与 media_work.nas_library_path 完全一致（避免误更新重复片名）。
+# 部署时若 NAS 前缀不同，请只改 nas_library_path，保持与 app.db 中一致。
+#
+# 运行（仓库根 future/ 下）:
+#   cd crawler-agent && source .venv/bin/activate
+#   pip install -e .   # 含 pyyaml
+#   export WALTER_DATA_DIR=/path/to/walter_data   # 可选；默认 ../walter_data（相对 crawler-agent）
+#   python -m crawler_agent.tools.enrich_library_douban --config config/enrich-douban.examples.yaml
+# 干跑:
+#   python -m crawler_agent.tools.enrich_library_douban --config config/enrich-douban.examples.yaml --dry-run
+
+entries:
+  - search_title: "毕业生"
+    kind_hint: movie
+    nas_library_path: "/volume1/homes/影视资源库/毕业生"
+
+  - search_title: "英国病人"
+    kind_hint: movie
+    nas_library_path: "/volume1/homes/影视资源库/英国病人"
+
+  - search_title: "绝望的主妇"
+    kind_hint: tv
+    nas_library_path: "/volume1/homes/影视资源库/绝望的主妇"

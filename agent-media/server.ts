@@ -48,12 +48,16 @@ const SCAN_POLICY_MAX_CONSECUTIVE_BATCH_TIMEOUTS = Math.max(
   Number(process.env.MEDIA_SCAN_POLICY_MAX_CONSECUTIVE_TIMEOUTS || 8) || 8
 );
 
-type RunStatus = "queued" | "running" | "success" | "failed";
+type RunStatus = "queued" | "running" | "success" | "failed" | "cancelled";
 type RunSummary = {
   id: string;
   triggerSource: string;
   status: RunStatus;
   dryRun: boolean;
+  /** inbox：扫描待入库；reindex：仅重解析资源库已有条目（不搬文件） */
+  mode?: "inbox" | "reindex";
+  reindexFilter?: "all" | "missing-tags" | "unresolved";
+  reindexLimit?: number;
   totalItems?: number;
   startedAt: string;
   finishedAt?: string;
@@ -92,8 +96,11 @@ type ResolvedMeta = {
   directors: string[];
   actors: string[];
   posterUrl: string | null;
-  matchStatus: "matched" | "unresolved";
+  matchStatus: "matched" | "unresolved" | "ai_inferred";
+  /** 用于搜索聚合的文本标签 */
   tags: string[];
+  /** 与 media_tag.slug 对齐 */
+  tagSlugs: string[];
   fetchNotes: string[];
 };
 type NormalizedTitle = {
@@ -688,6 +695,8 @@ function isUnderPath(targetPath: string, parentPath: string) {
 }
 
 const runsIndexPath = getRunsIndexPath();
+/** 用户请求优雅终止：worker 在「当前条目」完成后不再领取新任务 */
+const cancelRequestedRunIds = new Set<string>();
 const normalizeCachePath = getNormalizeCachePath();
 let normalizeCache: Record<string, Omit<NormalizedTitle, "source"> & { source: string }> = {};
 let eventSeq = 0;
@@ -970,22 +979,203 @@ async function scanInbox(runId: string): Promise<Candidate[]> {
   });
   return candidates;
 }
+
+/** 任一路径段以「.」开头则视为系统/隐藏项（.DS_Store、.Spotlight-V100、.@__thumb 等），回填时跳过 */
+function nasPathHasHiddenSegment(nasPath: string) {
+  return nasPath.split("/").some((seg) => seg.length > 0 && seg.startsWith("."));
+}
+
+/** 回填只处理「已进资源库」的条目：nas_library_path 须在 NAS_LIBRARY_ROOT 下（排除待入库等误写入的行） */
+function isUnderNasLibraryRoot(nasPath: string) {
+  if (!nasPath) return false;
+  const root = path.posix.normalize(NAS_LIBRARY_ROOT.replace(/\/+$/, "") || "/");
+  const p = path.posix.normalize(nasPath.replace(/\/+$/, "") || "/");
+  return p === root || p.startsWith(`${root}/`);
+}
+
+function loadReindexCandidates(filter: "all" | "missing-tags" | "unresolved", limit: number): Candidate[] {
+  const raw = getDb();
+  const lim = Math.max(1, Math.min(Number.isFinite(limit) && limit > 0 ? limit : 5000, 20000));
+  let sql = "SELECT nas_library_path AS p, title_zh AS t FROM media_work ORDER BY id ASC";
+  if (filter === "missing-tags") {
+    sql = `SELECT w.nas_library_path AS p, w.title_zh AS t FROM media_work w
+      WHERE NOT EXISTS (SELECT 1 FROM media_work_tag wt WHERE wt.work_id = w.id)
+      ORDER BY w.id ASC`;
+  } else if (filter === "unresolved") {
+    sql = `SELECT nas_library_path AS p, title_zh AS t FROM media_work
+      WHERE match_status = 'unresolved' ORDER BY id ASC`;
+  }
+  const fetchCap = Math.min(lim * 4, 50000);
+  const rows = raw.prepare(`${sql} LIMIT ?`).all(fetchCap) as { p: string; t: string }[];
+  const filtered = rows
+    .filter((r) => r.p && !nasPathHasHiddenSegment(r.p) && isUnderNasLibraryRoot(r.p))
+    .slice(0, lim);
+  return filtered.map((r) => ({
+    sourcePath: r.p,
+    sourceName: path.posix.basename(r.p) || r.t || "unknown",
+    sourceKind: VIDEO_EXT_RE.test(path.posix.basename(r.p)) ? ("file" as const) : ("directory" as const),
+  }));
+}
+
 async function tmdbFetch(url: string) {
   const resp = await fetch(url, { headers: { Authorization: `Bearer ${TMDB_TOKEN}`, Accept: "application/json" } });
   if (!resp.ok) throw new Error(`TMDB HTTP ${resp.status}`);
   return resp.json();
 }
-function mapGenres(genres: string[]) {
-  const tags = new Set<string>();
-  for (const g of genres) {
-    tags.add(g);
-    const l = g.toLowerCase();
-    if (l.includes("war") || g.includes("战争")) tags.add("战争");
-    if (l.includes("romance") || g.includes("爱情")) tags.add("爱情");
-    if (l.includes("science fiction") || g.includes("科幻")) tags.add("科幻");
+/** slug -> 展示名，与 Portal 合集 slug 对齐 */
+const MEDIA_TAG_SEEDS: { slug: string; name: string }[] = [
+  { slug: "action", name: "动作" },
+  { slug: "comedy", name: "喜剧" },
+  { slug: "drama", name: "剧情" },
+  { slug: "sci-fi", name: "科幻" },
+  { slug: "thriller", name: "悬疑" },
+  { slug: "horror", name: "恐怖" },
+  { slug: "animation", name: "动画" },
+  { slug: "war", name: "战争" },
+  { slug: "romance", name: "爱情" },
+  { slug: "documentary", name: "纪录" },
+  { slug: "fantasy", name: "奇幻" },
+  { slug: "crime", name: "犯罪" },
+  { slug: "family", name: "家庭" },
+  { slug: "history", name: "历史" },
+  { slug: "mystery", name: "推理" },
+];
+
+const TAG_SLUG_BY_GENRE_RE: { slug: string; re: RegExp }[] = [
+  { slug: "action", re: /动作|action/i },
+  { slug: "comedy", re: /喜剧|comedy/i },
+  { slug: "drama", re: /剧情|drama/i },
+  { slug: "sci-fi", re: /科幻|science\s*fiction|sci[-\s]?fi/i },
+  { slug: "thriller", re: /惊悚|悬疑|thriller|suspense/i },
+  { slug: "horror", re: /恐怖|horror/i },
+  { slug: "animation", re: /动画|animation|anime/i },
+  { slug: "war", re: /战争|war|military|二战|一战/i },
+  { slug: "romance", re: /爱情|romance/i },
+  { slug: "documentary", re: /纪录|documentary/i },
+  { slug: "fantasy", re: /奇幻|fantasy/i },
+  { slug: "crime", re: /犯罪|crime/i },
+  { slug: "family", re: /家庭|family/i },
+  { slug: "history", re: /历史|history/i },
+  { slug: "mystery", re: /推理|mystery/i },
+];
+
+function genreLabelsToSlugs(labels: string[]): string[] {
+  const out = new Set<string>();
+  for (const raw of labels) {
+    const g = String(raw || "").trim();
+    if (!g) continue;
+    for (const { slug, re } of TAG_SLUG_BY_GENRE_RE) {
+      if (re.test(g)) out.add(slug);
+    }
   }
-  return Array.from(tags);
+  return Array.from(out);
 }
+
+function slugsToSearchTags(slugs: string[], genreLabels: string[]): string[] {
+  const nameBySlug = new Map(MEDIA_TAG_SEEDS.map((x) => [x.slug, x.name]));
+  const merged = new Set<string>();
+  for (const s of slugs) {
+    const n = nameBySlug.get(s);
+    if (n) merged.add(n);
+    merged.add(s);
+  }
+  for (const g of genreLabels) {
+    if (g.trim()) merged.add(g.trim());
+  }
+  return Array.from(merged);
+}
+
+function ensureMediaTagSeeds(raw: Database.Database) {
+  const ins = raw.prepare("INSERT OR IGNORE INTO media_tag(slug, name) VALUES(?, ?)");
+  for (const row of MEDIA_TAG_SEEDS) {
+    ins.run(row.slug, row.name);
+  }
+}
+
+function syncWorkTags(raw: Database.Database, workId: number, slugs: string[]) {
+  raw.prepare("DELETE FROM media_work_tag WHERE work_id = ?").run(workId);
+  const sel = raw.prepare("SELECT id FROM media_tag WHERE slug = ?");
+  const ins = raw.prepare("INSERT OR IGNORE INTO media_work_tag(work_id, tag_id) VALUES(?, ?)");
+  for (const slug of new Set(slugs)) {
+    const row = sel.get(slug) as { id: number } | undefined;
+    if (row?.id) ins.run(workId, row.id);
+  }
+}
+
+async function inferMetadataWithGemini(candidate: Candidate, base: ResolvedMeta): Promise<ResolvedMeta | null> {
+  if (!GEMINI_API_KEY) {
+    base.fetchNotes.push("Gemini 未配置 API Key，无法在无 TMDB 命中时推断");
+    return null;
+  }
+  const prompt = [
+    "你是影视资料库助手。根据下面「路径与规范化标题」推断真实作品元数据。",
+    "若无法确定作品，仍给出最可能猜测；poster_url 可置 null。",
+    "仅输出 JSON，不要 markdown。",
+    "字段：title_zh, title_en, media_type(\"movie\"|\"tv\"), year(整数或 null), country(简写逗号分隔如 US,CN 或中文地区名), language(如 zh),",
+    "genres(字符串数组，中英文类型名均可), directors(最多4人), actors(最多10人), summary(中文简介一段)。",
+    `sourcePath: ${candidate.sourcePath}`,
+    `sourceName: ${candidate.sourceName}`,
+    `sourceKind: ${candidate.sourceKind}`,
+    `normalizedTitle: ${base.normalizedTitle}`,
+    `titleZh候选: ${base.titleZh}`,
+    `titleEn候选: ${base.titleEn}`,
+  ].join("\n");
+
+  const genResp = await callGeminiGenerateContent(prompt, GEMINI_MODEL);
+  if (!genResp.ok) {
+    base.fetchNotes.push(`Gemini 推断失败：${genResp.reason}`);
+    return null;
+  }
+  const parsed = parseGeminiJson(genResp.text);
+  if (!parsed || typeof parsed !== "object") {
+    base.fetchNotes.push("Gemini 推断：JSON 解析失败");
+    return null;
+  }
+  const p = parsed as Record<string, unknown>;
+  const titleZh = String(p.title_zh || base.titleZh).trim() || base.titleZh;
+  const titleEn = String(p.title_en || base.titleEn).trim();
+  const mediaType = p.media_type === "tv" ? "tv" : "movie";
+  const yearRaw = p.year;
+  const year =
+    typeof yearRaw === "number" && Number.isFinite(yearRaw)
+      ? Math.round(yearRaw)
+      : typeof yearRaw === "string" && /^\d{4}$/.test(yearRaw.trim())
+        ? Number(yearRaw.trim())
+        : null;
+  const country = String(p.country || "").trim() || null;
+  const language = String(p.language || "").trim() || null;
+  const genres = Array.isArray(p.genres) ? p.genres.map((x) => String(x)) : [];
+  const directors = Array.isArray(p.directors) ? p.directors.map((x) => String(x)).slice(0, 4) : [];
+  const actors = Array.isArray(p.actors) ? p.actors.map((x) => String(x)).slice(0, 10) : [];
+  const summary = String(p.summary || "").trim() || null;
+  const posterRaw = p.poster_url;
+  const posterUrl =
+    typeof posterRaw === "string" && /^https?:\/\//i.test(posterRaw.trim()) ? posterRaw.trim() : null;
+  const tagSlugs = genreLabelsToSlugs(genres);
+  const tags = slugsToSearchTags(tagSlugs, genres);
+  return {
+    ...base,
+    titleZh,
+    titleEn,
+    normalizedTitle: uniqueJoin(titleZh, titleEn),
+    mediaType,
+    year,
+    country,
+    language,
+    tmdbType: null,
+    tmdbId: null,
+    tmdbRating: null,
+    summary,
+    directors,
+    actors,
+    posterUrl,
+    matchStatus: "ai_inferred",
+    tags,
+    tagSlugs,
+    fetchNotes: [...base.fetchNotes, "元数据由 Gemini 在无 TMDB 命中时推断"],
+  };
+}
+
 async function resolveMetadata(candidate: Candidate): Promise<ResolvedMeta> {
   const normalized = await normalizeTitle(candidate.sourceName);
   const base: ResolvedMeta = {
@@ -1004,13 +1194,40 @@ async function resolveMetadata(candidate: Candidate): Promise<ResolvedMeta> {
     posterUrl: null,
     matchStatus: "unresolved",
     tags: [],
+    tagSlugs: [],
     fetchNotes: [],
   };
   if (!TMDB_TOKEN) {
     base.fetchNotes.push("TMDB token 未配置");
-    return base;
+    const inferred = await inferMetadataWithGemini(candidate, base);
+    return inferred || base;
   }
-  const queries = [normalized.titleZh, normalized.titleEn, normalized.normalizedTitle].filter(Boolean);
+  const rawQs = [
+    normalized.titleZh,
+    normalized.titleEn,
+    normalized.normalizedTitle,
+    candidate.sourceName?.trim() || "",
+  ].filter(Boolean);
+  const seenQ = new Set<string>();
+  const queries: string[] = [];
+  for (const q of rawQs) {
+    if (seenQ.has(q)) continue;
+    seenQ.add(q);
+    queries.push(q);
+  }
+  // 极短纯中文片名（如纪录片「轮回」）单独搜 TMDB 易空：追加「纪录片/电影」组合再试
+  for (const q of [...queries]) {
+    const t = q.trim();
+    if (t.length >= 1 && t.length <= 12 && /^[\u4e00-\u9fa5·\s]+$/u.test(t)) {
+      for (const suffix of [" 纪录片", " 电影"]) {
+        const aug = `${t.replace(/\s+/g, "")}${suffix}`;
+        if (!seenQ.has(aug)) {
+          seenQ.add(aug);
+          queries.push(aug);
+        }
+      }
+    }
+  }
   let picked: any = null;
   let pickedType: "movie" | "tv" = "movie";
   for (const q of queries) {
@@ -1026,10 +1243,20 @@ async function resolveMetadata(candidate: Candidate): Promise<ResolvedMeta> {
     }
     if (picked) break;
   }
-  if (!picked) return base;
+  if (!picked) {
+    base.fetchNotes.push("TMDB 搜索无结果");
+    const inferred = await inferMetadataWithGemini(candidate, base);
+    return inferred || base;
+  }
   const detail = await tmdbFetch(`${TMDB_BASE}/${pickedType}/${picked.id}?language=zh-CN&append_to_response=credits`).catch(() => null);
-  if (!detail) return base;
+  if (!detail) {
+    base.fetchNotes.push("TMDB 详情拉取失败");
+    const inferred = await inferMetadataWithGemini(candidate, base);
+    return inferred || base;
+  }
   const genres = Array.isArray(detail.genres) ? detail.genres.map((x: any) => String(x.name || "")) : [];
+  const tagSlugs = genreLabelsToSlugs(genres);
+  const tags = slugsToSearchTags(tagSlugs, genres);
   const directors = pickedType === "movie" ? (detail.credits?.crew || []).filter((x: any) => x.job === "Director").slice(0, 4).map((x: any) => String(x.name)) : [];
   const actors = (detail.credits?.cast || []).slice(0, 10).map((x: any) => String(x.name));
   return {
@@ -1049,7 +1276,8 @@ async function resolveMetadata(candidate: Candidate): Promise<ResolvedMeta> {
     actors,
     posterUrl: detail.poster_path ? `https://image.tmdb.org/t/p/w500${detail.poster_path}` : null,
     matchStatus: "matched",
-    tags: mapGenres(genres),
+    tags,
+    tagSlugs,
   };
 }
 
@@ -1065,21 +1293,37 @@ function getDb() {
         normalized_title TEXT NOT NULL DEFAULT '',media_type TEXT NOT NULL DEFAULT 'movie',year INTEGER,country TEXT,language TEXT,
         tmdb_type TEXT,tmdb_id INTEGER,tmdb_rating REAL,douban_rating REAL,match_status TEXT NOT NULL DEFAULT 'unresolved',summary TEXT,
         directors_json TEXT NOT NULL DEFAULT '[]',actors_json TEXT NOT NULL DEFAULT '[]',poster_url TEXT,nas_library_path TEXT NOT NULL,
-        metadata_path TEXT,search_text TEXT NOT NULL DEFAULT '',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL
+        metadata_path TEXT,search_text TEXT NOT NULL DEFAULT '',watch_status TEXT NOT NULL DEFAULT 'unwatched',watched_at INTEGER,
+        created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL
       );
       CREATE UNIQUE INDEX IF NOT EXISTS media_work_path_unique ON media_work(nas_library_path);
       CREATE TABLE IF NOT EXISTS media_tag (id INTEGER PRIMARY KEY AUTOINCREMENT,slug TEXT NOT NULL UNIQUE,name TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS media_work_tag (work_id INTEGER NOT NULL,tag_id INTEGER NOT NULL,PRIMARY KEY(work_id, tag_id));
     `);
+    try {
+      db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS media_work_tmdb_unique ON media_work(tmdb_type, tmdb_id)`);
+    } catch {
+      /* 若已有重复 tmdb 行则跳过 */
+    }
+    try {
+      const cols = db.prepare("PRAGMA table_info(media_work)").all() as { name: string }[];
+      const names = new Set(cols.map((c) => c.name));
+      if (!names.has("watch_status")) db.exec(`ALTER TABLE media_work ADD COLUMN watch_status TEXT NOT NULL DEFAULT 'unwatched'`);
+      if (!names.has("watched_at")) db.exec(`ALTER TABLE media_work ADD COLUMN watched_at INTEGER`);
+    } catch {
+      /* ignore */
+    }
+    ensureMediaTagSeeds(db);
   }
   return db;
 }
 function upsertIndex(meta: ResolvedMeta, metadataPath: string, nasPath: string) {
   const raw = getDb();
+  ensureMediaTagSeeds(raw);
   const now = Date.now();
   const searchText = [meta.titleZh, meta.titleEn, meta.summary || "", meta.directors.join(" "), meta.actors.join(" "), meta.tags.join(" "), meta.country || ""].join(" ").trim();
-  raw.prepare(`INSERT INTO media_work(title_zh,title_en,normalized_title,media_type,year,country,language,tmdb_type,tmdb_id,tmdb_rating,douban_rating,match_status,summary,directors_json,actors_json,poster_url,nas_library_path,metadata_path,search_text,created_at,updated_at)
-    VALUES(@titleZh,@titleEn,@normalizedTitle,@mediaType,@year,@country,@language,@tmdbType,@tmdbId,@tmdbRating,@doubanRating,@matchStatus,@summary,@directorsJson,@actorsJson,@posterUrl,@nasLibraryPath,@metadataPath,@searchText,@now,@now)
+  raw.prepare(`INSERT INTO media_work(title_zh,title_en,normalized_title,media_type,year,country,language,tmdb_type,tmdb_id,tmdb_rating,douban_rating,match_status,summary,directors_json,actors_json,poster_url,nas_library_path,metadata_path,search_text,watch_status,watched_at,created_at,updated_at)
+    VALUES(@titleZh,@titleEn,@normalizedTitle,@mediaType,@year,@country,@language,@tmdbType,@tmdbId,@tmdbRating,@doubanRating,@matchStatus,@summary,@directorsJson,@actorsJson,@posterUrl,@nasLibraryPath,@metadataPath,@searchText,'unwatched',NULL,@now,@now)
     ON CONFLICT(nas_library_path) DO UPDATE SET
       title_zh=excluded.title_zh,title_en=excluded.title_en,normalized_title=excluded.normalized_title,media_type=excluded.media_type,year=excluded.year,country=excluded.country,language=excluded.language,
       tmdb_type=excluded.tmdb_type,tmdb_id=excluded.tmdb_id,tmdb_rating=excluded.tmdb_rating,douban_rating=excluded.douban_rating,match_status=excluded.match_status,summary=excluded.summary,
@@ -1088,11 +1332,15 @@ function upsertIndex(meta: ResolvedMeta, metadataPath: string, nasPath: string) 
     tmdbType: meta.tmdbType, tmdbId: meta.tmdbId, tmdbRating: meta.tmdbRating, doubanRating: meta.doubanRating, matchStatus: meta.matchStatus, summary: meta.summary,
     directorsJson: JSON.stringify(meta.directors), actorsJson: JSON.stringify(meta.actors), posterUrl: meta.posterUrl, nasLibraryPath: nasPath, metadataPath, searchText, now,
   });
+  const row = raw.prepare("SELECT id FROM media_work WHERE nas_library_path = ?").get(nasPath) as { id: number } | undefined;
+  if (row?.id) syncWorkTags(raw, row.id, meta.tagSlugs || []);
 }
 
 const ItemState = Annotation.Root({
   runId: Annotation<string>(),
   dryRun: Annotation<boolean>(),
+  /** true：资源库回填模式，不执行 mv，nas 路径固定为 candidate.sourcePath */
+  skipPersistMove: Annotation<boolean>({ reducer: (_x, y) => y, default: () => false }),
   candidate: Annotation<Candidate>(),
   metadata: Annotation<ResolvedMeta>(),
 });
@@ -1103,7 +1351,8 @@ const graph = new StateGraph(ItemState)
       state.metadata.titleEn ? `${state.metadata.titleZh}_${state.metadata.titleEn}` : state.metadata.titleZh
     );
     const targetPath = path.posix.join(NAS_LIBRARY_ROOT, folder);
-    if (!state.dryRun) {
+    const skipMove = state.skipPersistMove === true;
+    if (!skipMove && !state.dryRun) {
       if (state.candidate.sourceKind === "file") {
         await ssh(
           `set -e; mkdir -p ${shQuote(targetPath)}; mv ${shQuote(state.candidate.sourcePath)} ${shQuote(
@@ -1118,7 +1367,7 @@ const graph = new StateGraph(ItemState)
         );
       }
       appendRunEvent(state.runId, { level: "info", node: "persist", message: `已移动到资源库：${targetPath}` });
-    } else {
+    } else if (!skipMove && state.dryRun) {
       appendRunEvent(state.runId, {
         level: "info",
         node: "persist",
@@ -1130,10 +1379,40 @@ const graph = new StateGraph(ItemState)
           targetPath,
         },
       });
+    } else if (skipMove && state.dryRun) {
+      appendRunEvent(state.runId, {
+        level: "info",
+        node: "persist",
+        message: `reindex dry-run：将更新元数据与标签（未写库）${state.candidate.sourcePath}`,
+        payload: {
+          itemKey: state.candidate.sourcePath,
+          sourceName: state.candidate.sourceName,
+          matchStatus: state.metadata.matchStatus,
+          tagSlugs: state.metadata.tagSlugs,
+          titleZh: state.metadata.titleZh,
+        },
+      });
+      return {};
     }
+    const nasPathForIndex = skipMove ? state.candidate.sourcePath : state.dryRun ? state.candidate.sourcePath : targetPath;
     const metadataPath = path.join(getMediaMetadataCacheDir(), `${slugify(state.metadata.titleZh)}-${Date.now()}.json`);
-    fs.writeFileSync(metadataPath, JSON.stringify({ ...state.metadata, sourcePath: state.candidate.sourcePath, targetPath, generatedAt: nowIso(), dryRun: state.dryRun }, null, 2), "utf8");
-    upsertIndex(state.metadata, metadataPath, state.dryRun ? state.candidate.sourcePath : targetPath);
+    fs.writeFileSync(
+      metadataPath,
+      JSON.stringify(
+        {
+          ...state.metadata,
+          sourcePath: state.candidate.sourcePath,
+          targetPath: skipMove ? state.candidate.sourcePath : targetPath,
+          generatedAt: nowIso(),
+          dryRun: state.dryRun,
+          reindex: skipMove,
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+    upsertIndex(state.metadata, metadataPath, nasPathForIndex);
     appendRunEvent(state.runId, {
       level: "info",
       node: "persist",
@@ -1142,8 +1421,9 @@ const graph = new StateGraph(ItemState)
         itemKey: state.candidate.sourcePath,
         sourceName: state.candidate.sourceName,
         sourcePath: state.candidate.sourcePath,
-        targetPath,
+        targetPath: skipMove ? state.candidate.sourcePath : targetPath,
         metadataPath,
+        reindex: skipMove,
       },
     });
     return {};
@@ -1154,11 +1434,32 @@ const graph = new StateGraph(ItemState)
   .compile();
 
 async function executeRun(run: RunSummary) {
+  cancelRequestedRunIds.delete(run.id);
   const running = { ...run, status: "running" as const };
   upsertRun(running);
-  appendRunEvent(run.id, { level: "info", node: "run", message: `开始执行（dry-run=${run.dryRun}）` });
+  const mode = run.mode || "inbox";
+  appendRunEvent(run.id, {
+    level: "info",
+    node: "run",
+    message: `开始执行（dry-run=${run.dryRun}，mode=${mode}${mode === "reindex" ? `，filter=${run.reindexFilter || "missing-tags"}` : ""}）`,
+  });
   try {
-    const candidates = await scanInbox(run.id);
+    const candidates =
+      mode === "reindex"
+        ? loadReindexCandidates(run.reindexFilter || "missing-tags", run.reindexLimit ?? 5000)
+        : await scanInbox(run.id);
+    if (mode === "reindex") {
+      appendRunEvent(run.id, {
+        level: "info",
+        node: "reindex",
+        message: `资源库回填：共 ${candidates.length} 条待处理（路径须在 ${NAS_LIBRARY_ROOT} 下；待入库等非资源库路径已排除）`,
+        payload: {
+          filter: run.reindexFilter || "missing-tags",
+          limit: run.reindexLimit ?? 5000,
+          libraryRoot: NAS_LIBRARY_ROOT,
+        },
+      });
+    }
     running.totalItems = candidates.length;
     upsertRun(running);
     const processCandidate = async (candidate: Candidate) => {
@@ -1209,6 +1510,7 @@ async function executeRun(run: RunSummary) {
         await graph.invoke({
           runId: run.id,
           dryRun: run.dryRun,
+          skipPersistMove: mode === "reindex",
           candidate,
           metadata: {
             ...normalized,
@@ -1226,6 +1528,7 @@ async function executeRun(run: RunSummary) {
             posterUrl: null,
             matchStatus: "unresolved",
             tags: [],
+            tagSlugs: [],
             fetchNotes: [],
           },
         });
@@ -1259,6 +1562,7 @@ async function executeRun(run: RunSummary) {
     const worker = async () => {
       while (true) {
         if (firstError) return;
+        if (cancelRequestedRunIds.has(run.id)) return;
         const idx = cursor;
         if (idx >= candidates.length) return;
         cursor += 1;
@@ -1271,7 +1575,24 @@ async function executeRun(run: RunSummary) {
       }
     };
     await Promise.all(Array.from({ length: workerCount }, () => worker()));
+    const userCancelled = cancelRequestedRunIds.has(run.id);
+    cancelRequestedRunIds.delete(run.id);
     if (firstError) throw firstError;
+
+    if (userCancelled) {
+      upsertRun({
+        ...running,
+        status: "cancelled",
+        finishedAt: nowIso(),
+        summary: "用户请求终止：未开始的条目已跳过；已在执行中的条目已跑完当前一步",
+      });
+      appendRunEvent(run.id, {
+        level: "warn",
+        node: "run",
+        message: "运行已按请求取消（优雅停止）",
+      });
+      return;
+    }
 
     upsertRun({ ...running, status: "success", finishedAt: nowIso(), summary: `完成，处理 ${candidates.length} 项` });
     appendRunEvent(run.id, { level: "info", node: "run", message: `执行结束，处理 ${candidates.length} 项` });
@@ -1319,10 +1640,39 @@ const server = createServer(async (req, res) => {
     if (hasActiveRun) {
       return json(res, { ok: false, error: "已有运行中的任务，请等待当前任务结束后再触发" }, 409);
     }
-    const run: RunSummary = { id: randomUUID(), triggerSource: String(body.triggerSource || "manual"), dryRun: body.dryRun !== false, status: "queued", startedAt: nowIso() };
+    const mode = body.mode === "reindex" ? "reindex" : "inbox";
+    const reindexFilter = ["all", "missing-tags", "unresolved"].includes(body.reindexFilter)
+      ? (body.reindexFilter as "all" | "missing-tags" | "unresolved")
+      : "missing-tags";
+    const reindexLimit = Math.min(20000, Math.max(1, Number(body.reindexLimit) || 5000));
+    const run: RunSummary = {
+      id: randomUUID(),
+      triggerSource: String(body.triggerSource || "manual"),
+      dryRun: body.dryRun !== false,
+      status: "queued",
+      startedAt: nowIso(),
+      mode,
+      ...(mode === "reindex" ? { reindexFilter, reindexLimit } : {}),
+    };
     upsertRun(run);
     void executeRun(run);
     return json(res, { ok: true, run });
+  }
+  const cancelM = url.pathname.match(/^\/runs\/([^/]+)\/cancel$/);
+  if (cancelM && req.method === "POST") {
+    const id = cancelM[1];
+    const run = readRunsIndex().find((x) => x.id === id);
+    if (!run) return json(res, { ok: false, error: "run not found" }, 404);
+    if (run.status !== "running" && run.status !== "queued") {
+      return json(res, { ok: false, error: "当前任务未在运行，无法取消" }, 400);
+    }
+    cancelRequestedRunIds.add(id);
+    appendRunEvent(id, {
+      level: "warn",
+      node: "run",
+      message: "已收到取消请求：worker 将在当前条目完成后停止领取新任务",
+    });
+    return json(res, { ok: true, message: "cancel requested" });
   }
   const m = url.pathname.match(/^\/runs\/([^/]+)$/);
   if (m && req.method === "GET") {

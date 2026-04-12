@@ -6,8 +6,10 @@ import { useCallback } from "react";
 type RunSummary = {
   id: string;
   triggerSource: string;
-  status: "queued" | "running" | "success" | "failed";
+  status: "queued" | "running" | "success" | "failed" | "cancelled";
   dryRun: boolean;
+  mode?: "inbox" | "reindex";
+  reindexFilter?: string;
   totalItems?: number;
   startedAt: string;
   finishedAt?: string;
@@ -45,10 +47,10 @@ type ItemEventGroup = {
 };
 
 const flowMermaid = `flowchart LR
-  scanInbox[扫描待入库]
+  scanInbox[扫描待入库或回填]
   normalizeTitle[名称规范化]
-  fetchMeta[抓取元数据 TMDB]
-  persistMeta[写入JSON与索引]
+  fetchMeta[TMDB或Gemini]
+  persistMeta[写JSON与DB含标签]
   updateRun[追加运行日志]
   scanInbox --> normalizeTitle --> fetchMeta --> persistMeta --> updateRun`;
 
@@ -61,6 +63,8 @@ export function MediaAgentConsole() {
   const [autoScrollLogs, setAutoScrollLogs] = useState(true);
   const [logViewMode, setLogViewMode] = useState<"timeline" | "by-item">("timeline");
   const [selectedItemKey, setSelectedItemKey] = useState<string | null>(null);
+  const [reindexFilter, setReindexFilter] = useState<"missing-tags" | "all" | "unresolved">("missing-tags");
+  const [cancelling, setCancelling] = useState(false);
   const logContainerRef = useRef<HTMLDivElement | null>(null);
 
   const loadRuns = useCallback(async () => {
@@ -81,14 +85,14 @@ export function MediaAgentConsole() {
     return data.run;
   }, []);
 
-  async function triggerRun(dryRun: boolean) {
+  async function postAgentRun(body: Record<string, unknown>) {
     setLoading(true);
     setError(null);
     try {
       const r = await fetch("/api/agent/media/runs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ dryRun, triggerSource: "portal-ui" }),
+        body: JSON.stringify({ triggerSource: "portal-ui", ...body }),
       });
       const data = await r.json();
       if (!r.ok || !data.ok || !data.run) throw new Error(data.error || "触发失败");
@@ -98,6 +102,37 @@ export function MediaAgentConsole() {
       setError(err instanceof Error ? err.message : "触发失败");
     } finally {
       setLoading(false);
+    }
+  }
+
+  function triggerInboxRun(dryRun: boolean) {
+    return postAgentRun({ dryRun, mode: "inbox" });
+  }
+
+  function triggerReindexRun(dryRun: boolean) {
+    return postAgentRun({
+      dryRun,
+      mode: "reindex",
+      reindexFilter,
+      reindexLimit: 5000,
+    });
+  }
+
+  async function cancelSelectedRun() {
+    if (!selectedRunId) return;
+    setCancelling(true);
+    setError(null);
+    try {
+      const r = await fetch(`/api/agent/media/runs/${encodeURIComponent(selectedRunId)}/cancel`, {
+        method: "POST",
+      });
+      const data = (await r.json()) as { ok?: boolean; error?: string };
+      if (!r.ok || !data.ok) throw new Error(data.error || "取消失败");
+      await loadRunDetail(selectedRunId);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "取消失败");
+    } finally {
+      setCancelling(false);
     }
   }
 
@@ -230,18 +265,18 @@ export function MediaAgentConsole() {
       <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
         <div className="mb-4 flex flex-wrap gap-2">
           <button
-            onClick={() => triggerRun(true)}
+            onClick={() => triggerInboxRun(true)}
             disabled={loading}
             className="rounded-lg bg-emerald-600 px-3 py-2 text-sm font-medium text-white disabled:opacity-60"
           >
-            扫描并执行（dry-run）
+            扫描待入库（dry-run）
           </button>
           <button
-            onClick={() => triggerRun(false)}
+            onClick={() => triggerInboxRun(false)}
             disabled={loading}
             className="rounded-lg bg-amber-600 px-3 py-2 text-sm font-medium text-white disabled:opacity-60"
           >
-            确认执行（会移动文件）
+            扫描待入库（会移动文件）
           </button>
           <button
             onClick={() => loadRuns().catch((err) => setError(err instanceof Error ? err.message : "刷新失败"))}
@@ -249,6 +284,46 @@ export function MediaAgentConsole() {
           >
             刷新记录
           </button>
+        </div>
+        <div className="mb-4 rounded-lg border border-slate-200 bg-slate-50 p-3">
+          <p className="mb-2 text-sm font-medium text-slate-800">资源库回填（不移动 NAS 文件）</p>
+          <p className="mb-2 text-xs text-slate-600">
+            用于升级后补写类型标签、TMDB 重试或 Gemini 推断。仅处理数据库里
+            <code className="text-slate-800">nas_library_path</code> 落在当前资源库根目录下的记录；历史上 dry-run
+            写入的「待入库」路径不会参与回填。任一路径段以「.」开头的记录（如 .DS_Store）也会跳过。
+          </p>
+          <div className="mb-2 flex flex-wrap items-center gap-2">
+            <label className="text-xs text-slate-600">
+              范围
+              <select
+                value={reindexFilter}
+                onChange={(e) => setReindexFilter(e.target.value as typeof reindexFilter)}
+                className="ml-1 rounded border border-slate-300 bg-white px-2 py-1 text-xs"
+              >
+                <option value="missing-tags">无标签</option>
+                <option value="unresolved">match_status 未解析</option>
+                <option value="all">全部（慎用）</option>
+              </select>
+            </label>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => triggerReindexRun(true)}
+              disabled={loading}
+              className="rounded-lg border border-emerald-600 bg-white px-3 py-2 text-sm font-medium text-emerald-800 disabled:opacity-60"
+            >
+              回填 dry-run
+            </button>
+            <button
+              type="button"
+              onClick={() => triggerReindexRun(false)}
+              disabled={loading}
+              className="rounded-lg bg-slate-800 px-3 py-2 text-sm font-medium text-white disabled:opacity-60"
+            >
+              回填写库
+            </button>
+          </div>
         </div>
         {error ? <p className="text-sm text-red-600">{error}</p> : null}
 
@@ -269,6 +344,7 @@ export function MediaAgentConsole() {
                     <div className="font-medium text-slate-800">{run.id.slice(0, 8)}</div>
                     <div className="mt-1 text-slate-500">
                       {run.dryRun ? "dry-run" : "execute"} · {run.status}
+                      {run.mode === "reindex" ? " · 回填" : ""}
                     </div>
                     <div className="mt-1 text-slate-500">{new Date(run.startedAt).toLocaleString()}</div>
                   </button>
@@ -279,9 +355,19 @@ export function MediaAgentConsole() {
           </div>
 
           <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-            <div className="mb-2 flex items-center justify-between gap-2">
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
               <h3 className="text-sm font-semibold text-slate-800">执行过程</h3>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                {selected && (selected.status === "running" || selected.status === "queued") ? (
+                  <button
+                    type="button"
+                    onClick={() => cancelSelectedRun()}
+                    disabled={cancelling || loading}
+                    className="rounded border border-rose-400 bg-rose-50 px-2 py-1 text-[11px] font-medium text-rose-900 hover:bg-rose-100 disabled:opacity-50"
+                  >
+                    {cancelling ? "正在请求终止…" : "优雅终止"}
+                  </button>
+                ) : null}
                 <button
                   onClick={() => setLogViewMode((m) => (m === "timeline" ? "by-item" : "timeline"))}
                   className="rounded border border-slate-300 bg-white px-2 py-1 text-[11px] text-slate-700 hover:bg-slate-100"
@@ -298,7 +384,8 @@ export function MediaAgentConsole() {
             </div>
             {selected ? (
               <p className="mb-2 text-xs text-slate-600">
-                当前 run: {selected.id} · {selected.status} · {selected.dryRun ? "dry-run" : "execute"}
+                当前 run: {selected.id} · {selected.status}
+                {selected.status === "cancelled" ? "（已优雅停止）" : ""} · {selected.dryRun ? "dry-run" : "execute"}
               </p>
             ) : null}
             {reviewItems.length > 0 ? (

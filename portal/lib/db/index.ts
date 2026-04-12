@@ -29,6 +29,51 @@ function migrateWeeklySpeedIllinoisRun(raw: Database.Database) {
   }
 }
 
+function migrateMediaWorkWatchColumns(raw: Database.Database) {
+  try {
+    const rows = raw.prepare("PRAGMA table_info(media_work)").all() as { name: string }[];
+    if (rows.length === 0) return;
+    const names = new Set(rows.map((r) => r.name));
+    if (!names.has("watch_status")) {
+      raw.exec(`ALTER TABLE media_work ADD COLUMN watch_status TEXT NOT NULL DEFAULT 'unwatched'`);
+    }
+    if (!names.has("watched_at")) {
+      raw.exec(`ALTER TABLE media_work ADD COLUMN watched_at INTEGER`);
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+const MEDIA_TAG_SEED_ROWS: [string, string][] = [
+  ["action", "动作"],
+  ["comedy", "喜剧"],
+  ["drama", "剧情"],
+  ["sci-fi", "科幻"],
+  ["thriller", "悬疑"],
+  ["horror", "恐怖"],
+  ["animation", "动画"],
+  ["war", "战争"],
+  ["romance", "爱情"],
+  ["documentary", "纪录"],
+  ["fantasy", "奇幻"],
+  ["crime", "犯罪"],
+  ["family", "家庭"],
+  ["history", "历史"],
+  ["mystery", "推理"],
+];
+
+function seedMediaTags(raw: Database.Database) {
+  try {
+    const ins = raw.prepare("INSERT OR IGNORE INTO media_tag(slug, name) VALUES (?, ?)");
+    for (const [slug, name] of MEDIA_TAG_SEED_ROWS) {
+      ins.run(slug, name);
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
 function ensureSchema(raw: Database.Database) {
   if (globalForDb.__bootstrapped) return;
   raw.exec(`
@@ -86,6 +131,8 @@ function ensureSchema(raw: Database.Database) {
       nas_library_path TEXT NOT NULL,
       metadata_path TEXT,
       search_text TEXT NOT NULL DEFAULT '',
+      watch_status TEXT NOT NULL DEFAULT 'unwatched',
+      watched_at INTEGER,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
     );
@@ -123,6 +170,8 @@ function ensureSchema(raw: Database.Database) {
     CREATE INDEX IF NOT EXISTS media_agent_run_event_idx ON media_agent_run_event(run_id, id);
   `);
   migrateWeeklySpeedIllinoisRun(raw);
+  migrateMediaWorkWatchColumns(raw);
+  seedMediaTags(raw);
   const now = Date.now();
   raw
     .prepare(

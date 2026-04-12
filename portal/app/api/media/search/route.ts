@@ -9,11 +9,14 @@ function scoreItem(item: {
   tags: string[];
   country: string | null;
   language: string | null;
+  directorsPreview: string;
+  actorsPreview: string;
 }, query: string) {
   let score = 0;
   if (item.titleZh.includes(query) || item.titleEn.toLowerCase().includes(query.toLowerCase())) score += 12;
   if ((item.summary || "").includes(query)) score += 5;
   if (item.tags.some((x) => x.includes(query))) score += 4;
+  if ((item.directorsPreview || "").includes(query) || (item.actorsPreview || "").includes(query)) score += 6;
   if ((item.country || "").includes(query) || (item.language || "").includes(query)) score += 2;
   return score;
 }

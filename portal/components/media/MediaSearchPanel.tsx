@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
+import { WatchStatusBadge } from "@/components/media/WatchStatusBadge";
 import type { MediaWorkCard } from "@/lib/media-data";
 
 type SearchResp = {
@@ -75,26 +76,44 @@ export function MediaSearchPanel() {
           {resp.items.length === 0 ? (
             <p className="rounded-lg bg-slate-50 p-3 text-sm text-slate-600">暂无匹配结果</p>
           ) : (
-            <ul className="space-y-2">
+            <ul className="space-y-3">
               {resp.items.map((item) => (
-                <li key={item.id} className="rounded-lg border border-slate-200 p-3">
-                  <Link
-                    href={`/movies/work/${item.id}`}
-                    scroll={false}
-                    className="text-sm font-medium text-slate-900 hover:text-amber-700"
-                  >
-                    {item.titleZh}
-                    {item.titleEn ? ` / ${item.titleEn}` : ""}
-                  </Link>
-                  <p className="mt-1 text-xs text-slate-500">
-                    {item.mediaType === "tv" ? "剧集" : "电影"} · {item.year ?? "年份未知"} ·{" "}
-                    {item.country || "地区未知"}
-                  </p>
-                  {item.summary ? (
-                    <p className="mt-1 text-sm text-slate-700">
-                      {item.summary.length > 120 ? `${item.summary.slice(0, 120)}...` : item.summary}
+                <li key={item.id} className="flex gap-3 rounded-lg border border-slate-200 p-3">
+                  <div className="h-20 w-14 shrink-0 overflow-hidden rounded border border-slate-200 bg-slate-100">
+                    {item.posterUrl ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={item.posterUrl} alt="" className="h-full w-full object-cover" />
+                    ) : (
+                      <div className="flex h-full items-center justify-center text-[10px] text-slate-400">无图</div>
+                    )}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Link
+                        href={`/movies/work/${item.id}`}
+                        className="min-w-0 text-sm font-medium text-slate-900 hover:text-amber-700"
+                      >
+                        {item.titleZh}
+                        {item.titleEn ? ` / ${item.titleEn}` : ""}
+                      </Link>
+                      <WatchStatusBadge status={item.watchStatus} variant="inline" />
+                    </div>
+                    <p className="mt-1 text-xs text-slate-500">
+                      {item.mediaType === "tv" ? "剧集" : "电影"} · {item.year ?? "年份未知"} ·{" "}
+                      {item.country || "地区未知"}
                     </p>
-                  ) : null}
+                    <p className="mt-1 text-xs text-slate-600">
+                      TMDB {item.tmdbRating != null ? item.tmdbRating.toFixed(1) : "—"} · 豆瓣{" "}
+                      {item.doubanRating != null ? item.doubanRating.toFixed(1) : "—"}
+                      {item.directorsPreview ? ` · 导演 ${item.directorsPreview}` : ""}
+                      {item.actorsPreview ? ` · 演员 ${item.actorsPreview}` : ""}
+                    </p>
+                    {item.summary ? (
+                      <p className="mt-1 text-sm text-slate-700">
+                        {item.summary.length > 120 ? `${item.summary.slice(0, 120)}...` : item.summary}
+                      </p>
+                    ) : null}
+                  </div>
                 </li>
               ))}
             </ul>

@@ -1,0 +1,10 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+data/browser-profiles/
+data/covers/
+*.egg-info/
+dist/
+.pytest_cache/
+.mypy_cache/

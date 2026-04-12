@@ -71,6 +71,8 @@ export const mediaWork = sqliteTable(
     nasLibraryPath: text("nas_library_path").notNull(),
     metadataPath: text("metadata_path"),
     searchText: text("search_text").notNull().default(""),
+    watchStatus: text("watch_status").notNull().default("unwatched"),
+    watchedAt: integer("watched_at", { mode: "timestamp" }),
     createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
     updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
   },

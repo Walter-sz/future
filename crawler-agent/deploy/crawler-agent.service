@@ -1,0 +1,17 @@
+[Unit]
+Description=CrawlerAgent (LangGraph + Playwright)
+After=network.target
+
+[Service]
+Type=simple
+User=walter
+WorkingDirectory=/Users/walter/Desktop/projects/OpenClaw/crawler-agent
+Environment=PYTHONUNBUFFERED=1
+# Environment=CRAWLER_API_KEY=change-me
+Environment=CRAWLER_PROFILE_DIR=/Users/walter/Desktop/projects/OpenClaw/crawler-agent/data/browser-profiles
+ExecStart=/Users/walter/Desktop/projects/OpenClaw/crawler-agent/.venv/bin/uvicorn crawler_agent.main:app --host 0.0.0.0 --port 5533
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
