@@ -14,7 +14,10 @@ const SUBPAGE_TITLES: Record<string, string> = {
 export function WalterHubHeader() {
   const pathname = usePathname() || "/";
   const isHome = pathname === "/";
-  const subTitle = SUBPAGE_TITLES[pathname] ?? getAgentRouteTitle(pathname);
+  const subTitle =
+    SUBPAGE_TITLES[pathname] ??
+    (pathname.startsWith("/movies/") ? "影视资源" : undefined) ??
+    getAgentRouteTitle(pathname);
 
   return (
     <header className="border-b border-amber-200/60 bg-white/90 shadow-sm backdrop-blur">

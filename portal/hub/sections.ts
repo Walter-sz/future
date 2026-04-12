@@ -35,9 +35,9 @@ export function getWalterSections(): WalterSection[] {
     {
       id: "movies",
       title: "影视资源",
-      description: "片单与媒体库（待建设）",
+      description: "按合集浏览与元数据检索",
       href: "/movies",
-      ready: false,
+      ready: true,
     },
     {
       id: "world",

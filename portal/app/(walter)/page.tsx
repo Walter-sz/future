@@ -16,7 +16,7 @@ export default function WalterHomePage() {
 
       <section aria-labelledby="agents-heading" className="border-t border-amber-200/60 pt-14">
         <h2 id="agents-heading" className="mb-1 text-lg font-semibold text-slate-900">
-          Agent 管理
+          Agents 管理
         </h2>
         <p className="mb-6 max-w-2xl text-sm leading-relaxed text-slate-600">
           每个 Agent 有独立入口，便于后续接入自动化、工具调用与对话编排；当前为占位控制台。

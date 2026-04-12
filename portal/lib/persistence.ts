@@ -1,7 +1,7 @@
 import path from "path";
 
 /**
- * 持久化数据根目录（SQLite、对照图等）。默认与 `football` 同级的仓库根目录下 `walter_data/`。
+ * 持久化数据根目录（SQLite、媒体索引、运行日志等）。默认仓库根目录 `walter_data/`。
  * 容器内需设置 `WALTER_DATA_DIR=/walter_data` 并挂载对应卷（见 docker-compose）。
  */
 export function getPersistenceRoot(): string {

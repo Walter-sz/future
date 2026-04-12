@@ -11,7 +11,7 @@ export function getWalterAgents(): WalterAgent[] {
   return [
     {
       slug: "butler",
-      title: "管家 Agent",
+      title: "Agent 大管家",
       description: "日常事务、提醒与家庭协调（待接入）",
       ready: false,
     },
@@ -30,8 +30,8 @@ export function getWalterAgents(): WalterAgent[] {
     {
       slug: "media",
       title: "影视资源 Agent",
-      description: "片单维护、观影记录与资源整理（待接入）",
-      ready: false,
+      description: "片单维护、运行日志与入库任务控制台",
+      ready: true,
     },
     {
       slug: "news",

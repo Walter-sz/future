@@ -3,6 +3,7 @@ import { drizzle } from "drizzle-orm/better-sqlite3";
 import fs from "fs";
 import path from "path";
 import { getPersistenceRoot } from "@/lib/persistence";
+import { ensureMediaDataDirs } from "@/lib/media-storage";
 import * as schema from "./schema";
 
 const globalForDb = globalThis as unknown as {
@@ -64,6 +65,62 @@ function ensureSchema(raw: Database.Database) {
       content TEXT NOT NULL DEFAULT '',
       updated_at INTEGER NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS media_work (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      title_zh TEXT NOT NULL,
+      title_en TEXT NOT NULL DEFAULT '',
+      normalized_title TEXT NOT NULL DEFAULT '',
+      media_type TEXT NOT NULL DEFAULT 'movie',
+      year INTEGER,
+      country TEXT,
+      language TEXT,
+      tmdb_type TEXT,
+      tmdb_id INTEGER,
+      tmdb_rating REAL,
+      douban_rating REAL,
+      match_status TEXT NOT NULL DEFAULT 'unresolved',
+      summary TEXT,
+      directors_json TEXT NOT NULL DEFAULT '[]',
+      actors_json TEXT NOT NULL DEFAULT '[]',
+      poster_url TEXT,
+      nas_library_path TEXT NOT NULL,
+      metadata_path TEXT,
+      search_text TEXT NOT NULL DEFAULT '',
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS media_work_path_unique ON media_work(nas_library_path);
+    CREATE UNIQUE INDEX IF NOT EXISTS media_work_tmdb_unique ON media_work(tmdb_type, tmdb_id);
+    CREATE TABLE IF NOT EXISTS media_tag (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      slug TEXT NOT NULL UNIQUE,
+      name TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS media_work_tag (
+      work_id INTEGER NOT NULL,
+      tag_id INTEGER NOT NULL,
+      PRIMARY KEY(work_id, tag_id)
+    );
+    CREATE TABLE IF NOT EXISTS media_agent_run (
+      id TEXT PRIMARY KEY NOT NULL,
+      trigger_source TEXT NOT NULL DEFAULT 'manual',
+      status TEXT NOT NULL DEFAULT 'queued',
+      dry_run INTEGER NOT NULL DEFAULT 1,
+      total_items INTEGER,
+      started_at INTEGER NOT NULL,
+      finished_at INTEGER,
+      summary TEXT
+    );
+    CREATE TABLE IF NOT EXISTS media_agent_run_event (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      run_id TEXT NOT NULL,
+      level TEXT NOT NULL DEFAULT 'info',
+      node TEXT,
+      message TEXT NOT NULL,
+      payload_json TEXT,
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS media_agent_run_event_idx ON media_agent_run_event(run_id, id);
   `);
   migrateWeeklySpeedIllinoisRun(raw);
   const now = Date.now();
@@ -78,6 +135,7 @@ function ensureSchema(raw: Database.Database) {
 export function getDb() {
   const dbPath = getDbPath();
   fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+  ensureMediaDataDirs();
   if (!globalForDb.__sqlite) {
     globalForDb.__sqlite = new Database(dbPath);
     ensureSchema(globalForDb.__sqlite);
