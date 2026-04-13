@@ -2,6 +2,13 @@
 /walter_data/*
 !/walter_data/.gitkeep
 
+# 本地密钥与环境（勿提交）
+.env
+.env.local
+.env.*.local
+/secrets/*
+!/secrets/README.md
+
 # Walter 门户（独立 Next 应用）
 /portal/node_modules/
 /portal/.next/
