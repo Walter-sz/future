@@ -1,3 +1,4 @@
+import "dotenv/config";
 import { createServer } from "http";
 import { execFile } from "child_process";
 import { promisify } from "util";

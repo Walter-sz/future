@@ -6,6 +6,7 @@
     "dev": "tsx server.ts"
   },
   "dependencies": {
+    "dotenv": "^16.4.7",
     "@langchain/langgraph": "^0.2.39",
     "better-sqlite3": "^11.8.1"
   },
