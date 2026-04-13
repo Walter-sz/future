@@ -11,6 +11,8 @@ import sqlite3
 import sys
 import time
 import traceback
+import urllib.error
+import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -20,6 +22,9 @@ import yaml
 from crawler_agent.browser_manager import BrowserManager
 from crawler_agent.config import get_settings
 from crawler_agent.graphs.douban_subject import run_douban_resolve_by_title
+
+# 豆瓣补全默认走局域网 crawler-agent HTTP（可用 CRAWLER_AGENT_URL 覆盖）；``--local-douban`` 时用本机 Playwright。
+DEFAULT_CRAWLER_AGENT_URL = "http://192.168.124.24:5533"
 from crawler_agent.tools.gemini_series_search import (
     gemini_resolve_series_search_title,
     planned_douban_search_titles,
@@ -158,6 +163,7 @@ def load_all_library_entries(
     limit: int | None = None,
     offset: int = 0,
     skip_if_douban_rating: bool = False,
+    only_incomplete_douban: bool = False,
 ) -> list[dict[str, Any]]:
     """与 Portal ``whereNasPathIsIndexedLibrary`` 一致：资源库路径下、排除待入库。"""
     root = (nas_root or _nas_library_root()).strip().rstrip("/") or "/"
@@ -166,7 +172,7 @@ def load_all_library_entries(
     try:
         where_skip = ""
         params: list[Any] = [root, like]
-        if skip_if_douban_rating:
+        if skip_if_douban_rating or only_incomplete_douban:
             where_skip = " AND douban_rating IS NULL "
         lim_sql = ""
         if limit is not None and limit > 0:
@@ -280,6 +286,87 @@ def build_merged_metadata(
     return merged
 
 
+def _meta_source_urls_from_task_payload(payload: dict[str, Any]) -> list[str]:
+    meta = payload.get("meta")
+    if not isinstance(meta, dict):
+        return []
+    su = meta.get("source_urls")
+    return [str(x) for x in su] if isinstance(su, list) else []
+
+
+def run_douban_resolve_http_sync(
+    base_url: str,
+    *,
+    title: str,
+    kind_hint: str,
+    api_key: str | None,
+    timeout_s: float,
+) -> tuple[dict[str, Any] | None, list[str], dict[str, Any] | None]:
+    """同步调用局域网 crawler-agent ``POST /v1/tasks/run``（由 asyncio.to_thread 包装）。"""
+    url = base_url.rstrip("/") + "/v1/tasks/run"
+    body = {
+        "site": "douban",
+        "task": "subject.resolve_by_title",
+        "params": {"title": title, "kind_hint": kind_hint},
+    }
+    raw = json.dumps(body, ensure_ascii=False).encode("utf-8")
+    req = urllib.request.Request(url, data=raw, method="POST", headers={"Content-Type": "application/json"})
+    if api_key:
+        req.add_header("X-Api-Key", api_key)
+    try:
+        with urllib.request.urlopen(req, timeout=max(20.0, timeout_s)) as resp:
+            payload = json.loads(resp.read().decode("utf-8", errors="replace"))
+    except urllib.error.HTTPError as e:
+        try:
+            payload = json.loads(e.read().decode("utf-8", errors="replace"))
+        except (json.JSONDecodeError, TypeError, OSError):
+            return None, [], {"code": "HTTP_ERROR", "message": f"HTTP {e.code}: {e.reason}"[:400]}
+    except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError) as e:
+        return None, [], {"code": "HTTP_TRANSPORT", "message": str(e)[:400]}
+
+    if not isinstance(payload, dict):
+        return None, [], {"code": "BAD_RESPONSE", "message": "任务响应不是 JSON 对象"}
+    if not payload.get("ok"):
+        err_o = payload.get("error") if isinstance(payload.get("error"), dict) else {}
+        return None, _meta_source_urls_from_task_payload(payload), {
+            "code": str(err_o.get("code", "TASK_FAILED")),
+            "message": str(err_o.get("message", ""))[:500],
+        }
+    data = payload.get("data")
+    if not isinstance(data, dict):
+        return None, _meta_source_urls_from_task_payload(payload), {"code": "EMPTY_DATA", "message": "任务 data 为空"}
+    return data, _meta_source_urls_from_task_payload(payload), None
+
+
+def ensure_cover_downloaded_local(sd: dict[str, Any], cover_cache_dir: Path) -> None:
+    """将 ``coverUrlCached`` / ``coverUrl`` 拉取到本机 ``data/covers``，供 ``_poster_url`` 命中。"""
+    did = sd.get("doubanId")
+    if did is None:
+        return
+    sid = str(did).strip()
+    if not sid.isdigit():
+        return
+    cover_cache_dir.mkdir(parents=True, exist_ok=True)
+    for ext in (".webp", ".jpg", ".jpeg", ".png"):
+        if (cover_cache_dir / f"{sid}{ext}").is_file():
+            return
+    url = sd.get("coverUrlCached") if isinstance(sd.get("coverUrlCached"), str) else None
+    if not url or not url.startswith(("http://", "https://")):
+        url = sd.get("coverUrl") if isinstance(sd.get("coverUrl"), str) else None
+    if not url or not url.startswith(("http://", "https://")):
+        return
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "Walter-enrich-library-douban/1.0"})
+        with urllib.request.urlopen(req, timeout=90) as r:
+            blob = r.read()
+        if len(blob) > 3 and blob[:3] == b"\xff\xd8\xff":
+            (cover_cache_dir / f"{sid}.jpg").write_bytes(blob)
+        else:
+            (cover_cache_dir / f"{sid}.webp").write_bytes(blob)
+    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError):
+        pass
+
+
 def run_fix_tv_display_titles_in_db() -> int:
     """去掉已入库剧集 title_zh 中的「第X季」等后缀（不调用豆瓣）。"""
     dbp = app_db_path()
@@ -314,8 +401,11 @@ def run_fix_tv_display_titles_in_db() -> int:
 
 
 async def process_one(
-    bm: BrowserManager,
+    bm: BrowserManager | None,
     *,
+    use_http: bool,
+    crawler_agent_base: str | None,
+    crawler_api_key: str | None,
     search_title: str,
     kind_hint: str,
     nas_library_path: str,
@@ -348,16 +438,22 @@ async def process_one(
     data = None
     urls: list[str] = []
     err: dict[str, Any] | None = None
-    for qi, q in enumerate(queries):
-        if qi:
-            await asyncio.sleep(0.85)
-        suffix = f" (尝试 {qi + 1}/{len(queries)})" if len(queries) > 1 and qi else ""
-        print(
-            f"[fetch] id={work_id} title={title_zh_existing!r} path={nas_library_path!r} "
-            f"douban_query={q!r} kind={kind_hint}{suffix}",
-            flush=True,
-        )
-        data, urls, err = await run_douban_resolve_by_title(
+    timeout_s = min(900.0, max(15.0, timeout_ms / 1000.0 + 20.0))
+    backend = "http" if (use_http and crawler_agent_base) else "local"
+
+    async def _resolve_one_query(q: str) -> tuple[dict[str, Any] | None, list[str], dict[str, Any] | None]:
+        if use_http and crawler_agent_base:
+            return await asyncio.to_thread(
+                run_douban_resolve_http_sync,
+                crawler_agent_base,
+                title=q,
+                kind_hint=kind_hint,
+                api_key=crawler_api_key,
+                timeout_s=timeout_s,
+            )
+        if bm is None:
+            return None, [], {"code": "NO_BROWSER", "message": "未启用 HTTP 且 BrowserManager 为空"}
+        return await run_douban_resolve_by_title(
             bm,
             title=q,
             kind_hint=kind_hint,
@@ -366,6 +462,17 @@ async def process_one(
             cover_cache_dir=cover_cache_dir,
             public_base_url=public_base_url,
         )
+
+    for qi, q in enumerate(queries):
+        if qi:
+            await asyncio.sleep(0.85)
+        suffix = f" (尝试 {qi + 1}/{len(queries)})" if len(queries) > 1 and qi else ""
+        print(
+            f"[fetch] id={work_id} title={title_zh_existing!r} path={nas_library_path!r} "
+            f"douban_query={q!r} kind={kind_hint} backend={backend}{suffix}",
+            flush=True,
+        )
+        data, urls, err = await _resolve_one_query(q)
         if not err and data:
             break
     tried = set(queries)
@@ -375,24 +482,19 @@ async def process_one(
             await asyncio.sleep(0.85)
             print(
                 f"[fetch] id={work_id} title={title_zh_existing!r} path={nas_library_path!r} "
-                f"douban_query={g!r} kind={kind_hint} (NOT_FOUND 后 Gemini 补试)",
+                f"douban_query={g!r} kind={kind_hint} backend={backend} (NOT_FOUND 后 Gemini 补试)",
                 flush=True,
             )
-            data, urls, err = await run_douban_resolve_by_title(
-                bm,
-                title=g,
-                kind_hint=kind_hint,
-                force_headed=force_headed,
-                timeout_ms=timeout_ms,
-                cover_cache_dir=cover_cache_dir,
-                public_base_url=public_base_url,
-            )
+            data, urls, err = await _resolve_one_query(g)
     if err:
         print(f"[error] 豆瓣失败: {err}")
         return
     if not data:
         print("[error] 豆瓣返回空 data")
         return
+
+    if use_http and not dry_run:
+        ensure_cover_downloaded_local(data, cover_cache_dir)
 
     patch = subject_data_to_update(data, kind_hint=kind_hint, cover_cache_dir=cover_cache_dir)
     prev = load_previous_metadata_json(metadata_path if isinstance(metadata_path, str) else None)
@@ -481,7 +583,22 @@ async def amain(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--skip-if-douban-rating",
         action="store_true",
-        help="若已有 douban_rating 则跳过（适合补全缺口、节省已跑条目）",
+        help="仅处理 douban_rating 为空的条目（与 --only-incomplete-douban 二选一或并存，语义相同）",
+    )
+    parser.add_argument(
+        "--only-incomplete-douban",
+        action="store_true",
+        help="与 --all-library 联用：仅补全尚无豆瓣评分的电影/电视剧（推荐）",
+    )
+    parser.add_argument(
+        "--crawler-agent-url",
+        default=None,
+        help="豆瓣解析 HTTP 基址（默认环境变量 CRAWLER_AGENT_URL，否则 http://192.168.124.24:5533）",
+    )
+    parser.add_argument(
+        "--local-douban",
+        action="store_true",
+        help="不调用局域网 crawler-agent，改用本机 Playwright（需已安装 Chromium）",
     )
     parser.add_argument(
         "--fix-tv-display-titles-in-db",
@@ -496,19 +613,30 @@ async def amain(argv: list[str] | None = None) -> int:
     if getattr(args, "fix_tv_display_titles_in_db", False):
         return run_fix_tv_display_titles_in_db()
 
+    if args.all_library and not (args.only_incomplete_douban or args.skip_if_douban_rating):
+        parser.error(
+            "与 --all-library 批量补全时须指定 --only-incomplete-douban 或 --skip-if-douban-rating，"
+            "以免对已写入 douban_rating 的条目全量重跑"
+        )
+
     if args.all_library:
         dbp = app_db_path()
         if not dbp.is_file():
             print(f"未找到数据库: {dbp}", flush=True)
             return 2
+        only_inc = bool(args.only_incomplete_douban or args.skip_if_douban_rating)
         entries = load_all_library_entries(
             dbp,
             nas_root=args.nas_library_root,
             limit=args.limit,
             offset=args.offset,
             skip_if_douban_rating=args.skip_if_douban_rating,
+            only_incomplete_douban=args.only_incomplete_douban,
         )
-        print(f"[all-library] 共 {len(entries)} 条待处理（skip_douban_rating={args.skip_if_douban_rating}）", flush=True)
+        print(
+            f"[all-library] 共 {len(entries)} 条待处理（only_incomplete_douban={only_inc}）",
+            flush=True,
+        )
         if not entries:
             print("无条目，退出", flush=True)
             return 0
@@ -523,7 +651,17 @@ async def amain(argv: list[str] | None = None) -> int:
     settings = get_settings()
     public_base = settings.public_base_url or os.environ.get("CRAWLER_PUBLIC_BASE_URL")
 
-    bm = BrowserManager(settings)
+    use_http = not args.local_douban
+    raw_url = (args.crawler_agent_url or os.environ.get("CRAWLER_AGENT_URL") or "").strip()
+    crawler_base = None if args.local_douban else (raw_url or DEFAULT_CRAWLER_AGENT_URL).rstrip("/")
+    crawler_api_key = (os.environ.get("CRAWLER_API_KEY") or "").strip() or None
+
+    if use_http:
+        print(f"[enrich] 豆瓣后端: HTTP {crawler_base}", flush=True)
+    else:
+        print("[enrich] 豆瓣后端: 本机 Playwright（--local-douban）", flush=True)
+
+    bm: BrowserManager | None = BrowserManager(settings) if args.local_douban else None
     failed = 0
     try:
         total = len(entries)
@@ -534,6 +672,9 @@ async def amain(argv: list[str] | None = None) -> int:
             try:
                 await process_one(
                     bm,
+                    use_http=use_http,
+                    crawler_agent_base=crawler_base,
+                    crawler_api_key=crawler_api_key,
                     search_title=ent["search_title"],
                     kind_hint=ent["kind_hint"],
                     nas_library_path=ent["nas_library_path"],
@@ -553,7 +694,8 @@ async def amain(argv: list[str] | None = None) -> int:
                 traceback.print_exc(file=sys.stdout)
                 await asyncio.sleep(2.0)
     finally:
-        await bm.shutdown()
+        if bm is not None:
+            await bm.shutdown()
     if failed:
         print(f"\n[summary] 共 {total} 条，其中 {failed} 条因异常失败，其余已处理。", flush=True)
     return 1 if failed else 0

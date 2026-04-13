@@ -145,14 +145,22 @@ curl -s http://127.0.0.1:5533/v1/tasks/run \
 
 与 **Portal / Walter 共用** `WALTER_DATA_DIR/app.db` 中的 `media_work` 表及 `WALTER_DATA_DIR/media/metadata/*.json` 侧车文件。
 
+**豆瓣解析默认走局域网 HTTP**（`POST {CRAWLER_AGENT_URL}/v1/tasks/run`，未设置 `CRAWLER_AGENT_URL` 时默认 **`http://192.168.124.24:5533`**）。系列/合集片名会先经 **Gemini**（`GEMINI_API_KEY`）拆成短检索词再请求 crawler；若 crawler 启用了鉴权，本机需设置 **`CRAWLER_API_KEY`**（请求头 `X-Api-Key`）。需要本机 Playwright 时加 **`--local-douban`**。
+
+批量补全 **仅允许** 处理尚无 `douban_rating` 的条目：须指定 **`--only-incomplete-douban`** 或 **`--skip-if-douban-rating`**（与 `--all-library` 联用），避免对已补全条目全量重跑。
+
 ```bash
 cd crawler-agent && source .venv/bin/activate && pip install -e .
 # 干跑
 python -m crawler_agent.tools.enrich_library_douban --config config/enrich-douban.examples.yaml --dry-run
 # 正式写库
 python -m crawler_agent.tools.enrich_library_douban --config config/enrich-douban.examples.yaml
-# 全量
-python -m crawler_agent.tools.enrich_library_douban --all-library --skip-if-douban-rating
+# 仅补全无豆瓣评分（影+剧），默认 HTTP 调局域网 crawler-agent
+python -m crawler_agent.tools.enrich_library_douban --all-library --only-incomplete-douban
+# 指定其它 crawler 地址
+CRAWLER_AGENT_URL=http://192.168.1.10:5533 python -m crawler_agent.tools.enrich_library_douban --all-library --only-incomplete-douban
+# 强制本机浏览器拉豆瓣（不使用 HTTP）
+python -m crawler_agent.tools.enrich_library_douban --all-library --only-incomplete-douban --local-douban
 ```
 
 ## systemd 部署
