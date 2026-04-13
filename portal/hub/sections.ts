@@ -40,6 +40,13 @@ export function getWalterSections(): WalterSection[] {
       ready: true,
     },
     {
+      id: "wealth",
+      title: "财富管理",
+      description: "资产与收支总览（待建设）",
+      href: "/wealth",
+      ready: false,
+    },
+    {
       id: "world",
       title: "去看看世界",
       description: "旅行与见闻（待建设）",

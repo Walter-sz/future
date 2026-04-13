@@ -8,6 +8,7 @@ const SUBPAGE_TITLES: Record<string, string> = {
   "/study": "学习&知识管理",
   "/photos": "照片管理",
   "/movies": "影视资源",
+  "/wealth": "财富管理",
   "/world": "去看看世界",
 };
 
