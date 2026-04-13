@@ -35,6 +35,11 @@ done
 
 cd "$ROOT"
 
+# macOS：系统 /usr/bin/python3 常为 3.9；Homebrew 在 /opt/homebrew 或 /usr/local（须先于下述探测）
+if [[ "$(uname -s)" == "Darwin" ]]; then
+  export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+fi
+
 # ── 1. 确保 venv 存在（需要 Python 3.10+）───────────
 
 PYTHON=""
