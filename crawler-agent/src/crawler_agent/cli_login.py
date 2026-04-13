@@ -14,8 +14,11 @@ async def amain(argv: list[str]) -> None:
         print("用法: python -m crawler_agent login <douban|xiaohongshu>", file=sys.stderr)
         sys.exit(2)
     site = argv[1].strip().lower()
+    if site == "x":
+        print("X (Twitter) 通过 xmcp API 访问，无需浏览器登录。", file=sys.stderr)
+        sys.exit(0)
     if site not in ("douban", "xiaohongshu"):
-        print("site 必须是 douban 或 xiaohongshu", file=sys.stderr)
+        print("site 必须是 douban / xiaohongshu / x", file=sys.stderr)
         sys.exit(2)
 
     settings = get_settings()

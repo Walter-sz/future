@@ -2,9 +2,11 @@ __pycache__/
 *.py[cod]
 .venv/
 venv/
-data/browser-profiles/
-data/covers/
+data/
+logs/
 *.egg-info/
 dist/
 .pytest_cache/
 .mypy_cache/
+.env
+.env.*

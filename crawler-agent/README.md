@@ -1,21 +1,25 @@
 # CrawlerAgent
 
-基于 **LangGraph + Playwright（持久化 Chromium）** 的内网抓取服务：统一入口 `POST /v1/tasks/run`，默认监听 **`0.0.0.0:5533`**。
+基于 **LangGraph + Playwright（持久化 Chromium）** 的统一抓取服务，支持 **豆瓣 / 小红书 / X (Twitter)** 三站点。
+
+提供 **REST**（`POST /v1/tasks/run`）和 **WebSocket**（`/v1/ws`）双协议访问，默认监听 **`0.0.0.0:5533`**。
 
 ## 功能
 
 | site | task | 说明 |
 |------|------|------|
 | `douban` | `subject.resolve_by_title` | 按名称搜索影视并解析最匹配条目（评分、人数、演职员等） |
-| `xiaohongshu` | `search.notes` | 按关键词搜索笔记，返回前 N 条（DOM 依赖强，可能需登录） |
+| `xiaohongshu` | `search.notes` | 按关键词搜索笔记（Gemini 排序 + 可选视觉判断 + QR 扫码登录） |
+| `x` | `search.posts` | 通过 xmcp 搜索 X 推文（可选 Gemini 筛选，无需浏览器） |
 
-**产品约定（豆瓣电视剧）**：豆瓣上剧集多按「季」拆成独立条目，搜索/联想通常把 **第一季** 排在前列；本任务在 `kind_hint` 为 `tv`（或 `auto` 且命中电视搜索）时，**默认接受以第一季条目**作为该剧的代表信息（海报、评分人数、简介等均来自该季页面）。
+**并发模型**：每个站点独立浏览器上下文，不同站点可并行；同站点内每个任务独占一个 Tab，通过 per-site 信号量（默认 3）控制并发。X 搜索无需浏览器，不受浏览器并发限制。
 
-## 安装（开发机或 192.168.124.24）
+**产品约定（豆瓣电视剧）**：豆瓣上剧集多按「季」拆成独立条目，搜索/联想通常把 **第一季** 排在前列；本任务在 `kind_hint` 为 `tv`（或 `auto` 且命中电视搜索）时，**默认接受以第一季条目**作为该剧的代表信息。
+
+## 安装
 
 ```bash
 cd crawler-agent
-# 需要 Python 3.10+（推荐 3.12）
 python3.12 -m venv .venv
 source .venv/bin/activate
 pip install -e .
@@ -26,15 +30,45 @@ playwright install chromium
 
 ## 环境变量
 
+### 服务端通用
+
 | 变量 | 说明 |
 |------|------|
 | `CRAWLER_HOST` | 默认 `0.0.0.0` |
 | `CRAWLER_PORT` | 默认 `5533` |
-| `CRAWLER_API_KEY` | 若设置则请求头必须带 `X-Api-Key: <值>` |
+| `CRAWLER_API_KEY` | 若设置则请求头必须带 `X-Api-Key: <值>`（WS 在消息中传 `api_key`） |
 | `CRAWLER_PROFILE_DIR` | 浏览器 profile 根目录，默认 `./data/browser-profiles` |
-| `CRAWLER_COVER_CACHE_DIR` | 豆瓣封面落盘目录，默认 `./data/covers`（经本服务 `GET /static/covers/<文件名>` 可直接访问；若豆瓣 CDN 返回 418 等，会自动改为截取条目页 `#mainpic` 海报为 JPEG） |
-| `CRAWLER_PUBLIC_BASE_URL` | 可选，如 `http://192.168.124.24:5533`（无尾斜杠）；设置后接口会在 `data.coverUrlCached` 中返回可直接打开的完整封面 URL |
+| `CRAWLER_COVER_CACHE_DIR` | 豆瓣封面落盘目录，默认 `./data/covers` |
+| `CRAWLER_PUBLIC_BASE_URL` | 可选，如 `http://192.168.124.24:5533` |
 | `CRAWLER_DEFAULT_TIMEOUT_MS` | 默认 `120000` |
+| `CRAWLER_MAX_CONCURRENT_TASKS` | 全局并发上限，默认 `5` |
+| `CRAWLER_MAX_CONCURRENT_PER_SITE` | 每站点 Tab 并发上限，默认 `3` |
+
+### X (Twitter)
+
+| 变量 | 说明 |
+|------|------|
+| `CRAWLER_XMCP_URL` | xmcp MCP 端点，默认 `http://127.0.0.1:8000/mcp` |
+| `CRAWLER_X_SEARCH_MAX_RESULTS` | X API 搜索最大返回条数，默认 `50` |
+| `CRAWLER_X_MAX_POSTS` | Gemini 筛选后最终返回条数，默认 `12` |
+
+### Gemini（X + XHS 共用）
+
+| 变量 | 说明 |
+|------|------|
+| `CRAWLER_GOOGLE_API_KEY` | Google Gemini API Key（未设置则跳过 AI 排序） |
+| `CRAWLER_GEMINI_MODEL` | 模型名，默认 `gemini-2.5-flash` |
+| `CRAWLER_GEMINI_REQUEST_TIMEOUT_S` | 超时秒数，默认 `120` |
+
+### XHS 增强
+
+| 变量 | 说明 |
+|------|------|
+| `CRAWLER_XHS_HEADLESS` | 是否无头运行（留空则 macOS 有头，其它无头） |
+| `CRAWLER_XHS_SEARCH_SCROLL_ROUNDS` | 搜索页滚动次数，默认 `9` |
+| `CRAWLER_XHS_MAX_POSTS` | 最终返回条数，默认 `12` |
+| `CRAWLER_XHS_GEMINI_USE_VISION` | 是否启用封面多模态判断，默认 `true` |
+| `CRAWLER_XHS_LOGIN_TIMEOUT_S` | QR 扫码登录超时秒数，默认 `120` |
 
 ## 登录态（持久化）
 
@@ -47,43 +81,7 @@ python -m crawler_agent login xiaohongshu
 
 完成登录后终端按 Enter，数据写入 `data/browser-profiles/<site>/`。
 
-## 资源库条目豆瓣补全（独立 CLI）
-
-与 **Portal / Walter 共用** `WALTER_DATA_DIR/app.db` 中的 `media_work` 表及 `WALTER_DATA_DIR/media/metadata/*.json` 侧车文件；**不经过** agent-media 入库图，仅按配置逐条调用本仓库内的豆瓣 LangGraph 并 **UPDATE** 已有行。
-
-**前置**：同登录节，建议在有图形界面环境完成豆瓣登录；封面抓取默认 **headed** 更稳（可用 `--no-force-headed` 尝试无头）。
-
-**环境变量**
-
-| 变量 | 说明 |
-|------|------|
-| `WALTER_DATA_DIR` | Walter 数据根（含 `app.db`、`media/metadata/`）。未设置时，若本包位于 `future/crawler-agent/` 布局，则默认使用 `future/walter_data` |
-| `CRAWLER_PUBLIC_BASE_URL` | 可选；设置后豆瓣结果中可带 `coverUrlCached`，便于海报使用本服务静态地址 |
-
-**配置文件**：YAML，根键 `entries`，每项含 `search_title`、`kind_hint`（`auto` \| `movie` \| `tv`）、`nas_library_path`（须与库里 **`nas_library_path` 完全一致**）。示例见 [config/enrich-douban.examples.yaml](config/enrich-douban.examples.yaml)。
-
-**命令**
-
-```bash
-cd crawler-agent && source .venv/bin/activate && pip install -e .
-# 干跑（不写库）
-python -m crawler_agent.tools.enrich_library_douban --config config/enrich-douban.examples.yaml --dry-run
-# 正式写库（串行，条间约 1s）
-python -m crawler_agent.tools.enrich_library_douban --config config/enrich-douban.examples.yaml
-
-# 资源库内全部条目（与 Portal 相同 NAS 前缀规则；用 title_zh 搜豆瓣）
-export WALTER_DATA_DIR=/path/to/walter_data
-export NAS_LIBRARY_ROOT=/volume1/homes/影视资源库   # 可选，默认值同上
-python -m crawler_agent.tools.enrich_library_douban --all-library --skip-if-douban-rating
-# 断点续跑：已处理 50 条后
-python -m crawler_agent.tools.enrich_library_douban --all-library --skip-if-douban-rating --offset 50
-# 仅试跑前 5 条
-python -m crawler_agent.tools.enrich_library_douban --all-library --limit 5 --dry-run
-```
-
-Portal 列表依赖 `NAS_LIBRARY_ROOT` 与库路径前缀一致；若仅本地演示，请保持与 `media_work.nas_library_path` 相同前缀。
-
-**海报在网页显示**：豆瓣 CDN 对站外 `Referer` 常拦截，补全脚本在本地封面存在时会将 `poster_url` 写成 **`/api/media/douban-cover/<豆瓣subject数字ID>`**，由 Portal 同域读 `CRAWLER_COVER_CACHE_DIR`（默认 monorepo 下 `../crawler-agent/data/covers`）。部署时请在 Portal 环境设置 **`DOUBAN_COVER_CACHE_DIR`** 指向实际封面目录。
+X (Twitter) 无需浏览器登录——通过 xmcp MCP server 使用 API 凭证。
 
 ## 启动
 
@@ -93,21 +91,70 @@ uvicorn crawler_agent.main:app --host 0.0.0.0 --port 5533
 crawler-agent
 ```
 
-## API 示例
+## REST API 示例
 
 ```bash
+# 健康检查
 curl -s http://127.0.0.1:5533/health
 
-curl -s http://127.0.0.1:5533/v1/tasks -H "X-Api-Key: yourkey"
+# 查看任务目录
+curl -s http://127.0.0.1:5533/v1/tasks
 
-curl -s http://127.0.0.1:5533/v1/tasks/run -H "Content-Type: application/json" -H "X-Api-Key: yourkey" \
-  -d '{"site":"douban","task":"subject.resolve_by_title","params":{"title":"肖申克的救赎","kind_hint":"auto"}}'
+# 豆瓣搜索
+curl -s http://127.0.0.1:5533/v1/tasks/run \
+  -H "Content-Type: application/json" \
+  -d '{"site":"douban","task":"subject.resolve_by_title","params":{"title":"肖申克的救赎"}}'
+
+# X 搜索
+curl -s http://127.0.0.1:5533/v1/tasks/run \
+  -H "Content-Type: application/json" \
+  -d '{"site":"x","task":"search.posts","params":{"query":"Tokyo travel"}}'
+
+# 小红书搜索
+curl -s http://127.0.0.1:5533/v1/tasks/run \
+  -H "Content-Type: application/json" \
+  -d '{"site":"xiaohongshu","task":"search.notes","params":{"query":"咖啡推荐","limit":10}}'
 ```
 
-## systemd（部署到 OpenClaw 目录时参考）
+## WebSocket 协议
 
-见 [deploy/crawler-agent.service](deploy/crawler-agent.service)。将 `WorkingDirectory`、`User` 改为远端实际路径与用户。
+连接 `ws://127.0.0.1:5533/v1/ws`，发送：
 
-## 同步到 192.168.124.24
+```json
+{
+  "type": "run",
+  "site": "xiaohongshu",
+  "task": "search.notes",
+  "params": { "query": "旅行攻略" },
+  "api_key": "yourkey"
+}
+```
 
-将本目录 `rsync` 到 `walter@192.168.124.24:/Users/walter/Desktop/projects/OpenClaw/crawler-agent` 后，在远端重复安装与 `systemctl` 步骤即可。
+服务端推送（任意数量）：
+
+```json
+{"type": "status",  "message": "正在搜索..."}
+{"type": "qr_code", "image": "data:image/png;base64,..."}
+{"type": "result",  "platform": "xhs", "cards": [...]}
+{"type": "done",    "ok": true, "data": {...}}
+```
+
+支持 `ping` / `pong` 心跳。单连接可发送多次 `run` 消息。
+
+## 资源库条目豆瓣补全（独立 CLI）
+
+与 **Portal / Walter 共用** `WALTER_DATA_DIR/app.db` 中的 `media_work` 表及 `WALTER_DATA_DIR/media/metadata/*.json` 侧车文件。
+
+```bash
+cd crawler-agent && source .venv/bin/activate && pip install -e .
+# 干跑
+python -m crawler_agent.tools.enrich_library_douban --config config/enrich-douban.examples.yaml --dry-run
+# 正式写库
+python -m crawler_agent.tools.enrich_library_douban --config config/enrich-douban.examples.yaml
+# 全量
+python -m crawler_agent.tools.enrich_library_douban --all-library --skip-if-douban-rating
+```
+
+## systemd 部署
+
+见 [deploy/crawler-agent.service](deploy/crawler-agent.service)。

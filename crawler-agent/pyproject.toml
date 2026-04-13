@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "crawler-agent"
-version = "0.1.0"
-description = "LangGraph + Playwright crawl service (Douban, Xiaohongshu)"
+version = "0.2.0"
+description = "LangGraph + Playwright crawl service (Douban, X, Xiaohongshu)"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
@@ -13,10 +13,13 @@ dependencies = [
   "uvicorn[standard]>=0.32.0",
   "langgraph>=0.2.50",
   "langchain-core>=0.3.0",
+  "langchain-google-genai>=2.1.0",
   "playwright>=1.49.0",
   "pydantic>=2.9.0",
   "pydantic-settings>=2.6.0",
   "pyyaml>=6.0.1",
+  "fastmcp>=2.0.0",
+  "websockets>=13.0",
 ]
 
 [project.scripts]

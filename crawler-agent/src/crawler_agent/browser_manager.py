@@ -1,8 +1,15 @@
-"""Persistent Playwright contexts per site (serialised per site)."""
+"""Persistent Playwright contexts per site with multi-tab concurrency.
+
+Each *site* gets one persistent Chromium context (shared cookies / login state).
+Each *task* gets its own tab (Page) via ``acquire_page`` / ``release_page``,
+so multiple users can run tasks on the same site concurrently without page
+navigation conflicts.
+"""
 
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 from collections import defaultdict
 from pathlib import Path
@@ -13,6 +20,24 @@ if TYPE_CHECKING:
 
 from crawler_agent.config import Settings
 
+log = logging.getLogger("crawler-agent.browser")
+
+_USER_AGENT = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/125.0.0.0 Safari/537.36"
+)
+
+_STEALTH_INIT_SCRIPT = """
+Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+Object.defineProperty(navigator, 'languages', { get: () => ['zh-CN', 'zh', 'en-US', 'en'] });
+window.chrome = { runtime: {} };
+Object.defineProperty(navigator, 'permissions', {
+    get: () => ({ query: (params) => Promise.resolve({ state: 'granted', onchange: null }) }),
+});
+"""
+
 
 class BrowserManager:
     def __init__(self, settings: Settings) -> None:
@@ -20,13 +45,22 @@ class BrowserManager:
         self._playwright: Playwright | None = None
         self._contexts: dict[str, BrowserContext] = {}
         self._headed: dict[str, bool] = {}
-        self._locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
+        # Lock protects context creation / headed-switching per site
+        self._ctx_locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
+        # Semaphore limits concurrent tabs per site
+        self._site_sems: dict[str, asyncio.Semaphore] = defaultdict(
+            lambda: asyncio.Semaphore(max(1, settings.max_concurrent_per_site))
+        )
+
+    @property
+    def settings(self) -> Settings:
+        return self._settings
 
     def profile_path(self, site: str) -> Path:
         base = self._settings.profile_dir.resolve()
         return base / site
 
-    async def _pw(self):
+    async def _pw(self) -> Playwright:
         if self._playwright is None:
             from playwright.async_api import async_playwright
 
@@ -34,14 +68,14 @@ class BrowserManager:
         return self._playwright
 
     async def close_site(self, site: str) -> None:
-        async with self._locks[site]:
+        async with self._ctx_locks[site]:
             ctx = self._contexts.pop(site, None)
             self._headed.pop(site, None)
             if ctx:
                 await ctx.close()
 
     async def get_context(self, site: str, *, headed: bool) -> BrowserContext:
-        async with self._locks[site]:
+        async with self._ctx_locks[site]:
             pw = await self._pw()
             existing = self._contexts.get(site)
             if existing and self._headed.get(site) == headed:
@@ -53,26 +87,62 @@ class BrowserManager:
             path = self.profile_path(site)
             path.mkdir(parents=True, exist_ok=True)
 
+            _clear_singleton_locks(path)
+
             ctx = await pw.chromium.launch_persistent_context(
                 user_data_dir=str(path),
                 headless=not headed,
+                user_agent=_USER_AGENT,
                 viewport={"width": 1365, "height": 900},
                 locale="zh-CN",
                 timezone_id="Asia/Shanghai",
                 args=[
                     "--disable-blink-features=AutomationControlled",
+                    "--disable-setuid-sandbox",
                     "--no-sandbox",
                 ],
             )
+            await ctx.add_init_script(_STEALTH_INIT_SCRIPT)
             self._contexts[site] = ctx
             self._headed[site] = headed
             return ctx
+
+    # ------------------------------------------------------------------
+    # Legacy single-page access (used by douban graph which shares a page
+    # across ensure_session → search → pick → fetch → normalise pipeline)
+    # ------------------------------------------------------------------
 
     async def get_page(self, site: str, *, headed: bool) -> Page:
         ctx = await self.get_context(site, headed=headed)
         if ctx.pages:
             return ctx.pages[0]
         return await ctx.new_page()
+
+    # ------------------------------------------------------------------
+    # Multi-tab API: each caller gets its own tab, safe for concurrency
+    # ------------------------------------------------------------------
+
+    async def acquire_page(self, site: str, *, headed: bool) -> Page:
+        """Open a new tab in the site's context (blocks if per-site limit is reached)."""
+        await self._site_sems[site].acquire()
+        try:
+            ctx = await self.get_context(site, headed=headed)
+            return await ctx.new_page()
+        except Exception:
+            self._site_sems[site].release()
+            raise
+
+    async def release_page(self, site: str, page: Page) -> None:
+        """Close the tab and release the per-site semaphore slot."""
+        try:
+            if not page.is_closed():
+                await page.close()
+        except Exception:
+            log.debug("Error closing page for %s", site, exc_info=True)
+        finally:
+            self._site_sems[site].release()
+
+    # ------------------------------------------------------------------
 
     async def shutdown(self) -> None:
         for site in list(self._contexts.keys()):
@@ -82,12 +152,33 @@ class BrowserManager:
             self._playwright = None
 
 
+# ---------------------------------------------------------------------------
+# Module-level helpers
+# ---------------------------------------------------------------------------
+
+
 def has_display() -> bool:
     return bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
 
 
+def _clear_singleton_locks(profile_dir: Path) -> None:
+    """Remove stale Chromium singleton locks left by crashed processes."""
+    for name in ("SingletonLock", "SingletonSocket", "SingletonCookie"):
+        p = profile_dir / name
+        if p.exists():
+            try:
+                p.unlink()
+                log.info("Removed stale lock: %s", p)
+            except OSError:
+                pass
+
+
+# ---------------------------------------------------------------------------
+# Douban session probes
+# ---------------------------------------------------------------------------
+
+
 def _douban_login_or_challenge_url(url: str) -> bool:
-    """用户正在登录/验证/checkpoint 流程时，不可再 goto 首页，否则会反复打断当前页。"""
     u = (url or "").lower()
     return (
         "sec.douban.com" in u
@@ -97,12 +188,8 @@ def _douban_login_or_challenge_url(url: str) -> bool:
     )
 
 
-async def probe_douban_session(page) -> bool:
-    """Return True if movie.douban.com loads without hard block.
-
-    若在登录页、验证页或 sec/checkpoint，**不会**再次 ``goto`` 电影首页，避免
-    ``_wait_until_session_ok`` 每 2.5s 调用本函数时把用户正在操作的页面刷掉。
-    """
+async def probe_douban_session(page: Page) -> bool:
+    """Return True if movie.douban.com loads without hard block."""
     from crawler_agent import human
 
     cur = page.url or ""
@@ -118,7 +205,11 @@ async def probe_douban_session(page) -> bool:
     need_goto = "movie.douban.com" not in cur
     if need_goto:
         try:
-            await page.goto("https://movie.douban.com/", wait_until="domcontentloaded", timeout=45_000)
+            await page.goto(
+                "https://movie.douban.com/",
+                wait_until="domcontentloaded",
+                timeout=45_000,
+            )
         except Exception:
             return False
     await human.jitter(0.2, 0.5)
@@ -127,19 +218,5 @@ async def probe_douban_session(page) -> bool:
     if "sec.douban.com" in url or "checkpoint" in url.lower():
         return False
     if "验证" in body and ("滑动" in body or "验证码" in body):
-        return False
-    return True
-
-
-async def probe_xhs_session(page) -> bool:
-    try:
-        await page.goto("https://www.xiaohongshu.com/explore", wait_until="domcontentloaded", timeout=45_000)
-    except Exception:
-        return False
-    url = page.url.lower()
-    if "login" in url:
-        return False
-    body = await page.content()
-    if "登录" in body and "手机号" in body:
         return False
     return True

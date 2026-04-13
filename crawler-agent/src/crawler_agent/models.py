@@ -13,7 +13,7 @@ class TaskOptions(BaseModel):
 
 
 class TaskRunRequest(BaseModel):
-    site: Literal["douban", "xiaohongshu"]
+    site: Literal["douban", "xiaohongshu", "x"]
     task: str
     params: dict[str, Any] = Field(default_factory=dict)
     client_request_id: str | None = None
@@ -72,3 +72,10 @@ class DoubanResolveByTitleParams(BaseModel):
 class XiaohongshuSearchParams(BaseModel):
     query: str
     limit: int = Field(default=10, ge=1, le=30)
+
+
+class XSearchParams(BaseModel):
+    """X (Twitter) 搜索参数。通过 xmcp MCP server 调用 X API。"""
+
+    query: str
+    max_results: int = Field(default=50, ge=1, le=100)

@@ -7,9 +7,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from crawler_agent.browser_manager import BrowserManager
-from crawler_agent.config import get_settings
-from crawler_agent.graphs.douban_subject import run_douban_resolve_by_title
-from crawler_agent.graphs.xhs_search import run_xhs_search_notes
+from crawler_agent.config import Settings, get_settings
 from crawler_agent.models import (
     DoubanResolveByTitleParams,
     TaskCatalogResponse,
@@ -19,7 +17,10 @@ from crawler_agent.models import (
     TaskRunRequest,
     TaskRunResponse,
     XiaohongshuSearchParams,
+    XSearchParams,
 )
+from crawler_agent.progress import SendMessage
+
 
 def build_catalog() -> TaskCatalogResponse:
     return TaskCatalogResponse(
@@ -33,11 +34,22 @@ def build_catalog() -> TaskCatalogResponse:
             TaskDescriptor(
                 site="xiaohongshu",
                 task="search.notes",
-                summary="按关键词搜索笔记并返回前 N 条列表信息",
+                summary="按关键词搜索笔记并返回前 N 条列表信息（Gemini 排序 + 可选视觉判断）",
                 params_schema_ref="#/components/schemas/XiaohongshuSearchParams",
+            ),
+            TaskDescriptor(
+                site="x",
+                task="search.posts",
+                summary="通过 xmcp 搜索 X 推文，可选 Gemini 排序筛选（无需浏览器）",
+                params_schema_ref="#/components/schemas/XSearchParams",
             ),
         ]
     )
+
+
+_RETRYABLE_CODES = frozenset(
+    {"SESSION_TIMEOUT", "CAPTCHA", "TIMEOUT", "NEED_LOGIN", "NEED_DISPLAY"}
+)
 
 
 async def run_task(
@@ -45,9 +57,9 @@ async def run_task(
     bm: BrowserManager,
     *,
     default_timeout_ms: int,
+    on_progress: SendMessage | None = None,
 ) -> TaskRunResponse:
     started = datetime.now(timezone.utc).isoformat()
-    meta = TaskMeta(client_request_id=req.client_request_id, started_at=started)
     timeout_ms = req.options.timeout_ms or default_timeout_ms
     force_headed = req.options.force_headed
     settings = get_settings()
@@ -55,6 +67,8 @@ async def run_task(
     key = (req.site, req.task)
     try:
         if key == ("douban", "subject.resolve_by_title"):
+            from crawler_agent.graphs.douban_subject import run_douban_resolve_by_title
+
             p = DoubanResolveByTitleParams.model_validate(req.params)
             data, urls, err = await run_douban_resolve_by_title(
                 bm,
@@ -65,15 +79,32 @@ async def run_task(
                 cover_cache_dir=settings.cover_cache_dir,
                 public_base_url=settings.public_base_url,
             )
+
         elif key == ("xiaohongshu", "search.notes"):
+            from crawler_agent.graphs.xhs_search import run_xhs_search_notes
+
             p = XiaohongshuSearchParams.model_validate(req.params)
             data, urls, err = await run_xhs_search_notes(
                 bm,
+                settings=settings,
                 query=p.query,
                 limit=p.limit,
                 force_headed=force_headed,
                 timeout_ms=timeout_ms,
+                on_progress=on_progress,
             )
+
+        elif key == ("x", "search.posts"):
+            from crawler_agent.graphs.x_search import run_x_search_posts
+
+            p = XSearchParams.model_validate(req.params)
+            data, urls, err = await run_x_search_posts(
+                settings,
+                query=p.query,
+                max_results=p.max_results,
+                on_progress=on_progress,
+            )
+
         else:
             return TaskRunResponse(
                 ok=False,
@@ -91,6 +122,7 @@ async def run_task(
                     retryable=False,
                 ),
             )
+
     except asyncio.TimeoutError:
         return TaskRunResponse(
             ok=False,
@@ -124,13 +156,17 @@ async def run_task(
         source_urls=urls,
     )
     if err:
-        retryable = err["code"] in ("SESSION_TIMEOUT", "CAPTCHA", "TIMEOUT", "NEED_LOGIN")
+        retryable = err["code"] in _RETRYABLE_CODES
         return TaskRunResponse(
             ok=False,
             site=req.site,
             task=req.task,
             data=None,
             meta=meta,
-            error=TaskError(code=err["code"], message=err.get("message", ""), retryable=retryable),
+            error=TaskError(
+                code=err["code"], message=err.get("message", ""), retryable=retryable
+            ),
         )
-    return TaskRunResponse(ok=True, site=req.site, task=req.task, data=data, meta=meta, error=None)
+    return TaskRunResponse(
+        ok=True, site=req.site, task=req.task, data=data, meta=meta, error=None
+    )

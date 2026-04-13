@@ -1,3 +1,3 @@
-"""CrawlerAgent: LangGraph + Playwright HTTP service."""
+"""CrawlerAgent: unified crawl service for Douban, X, and Xiaohongshu."""
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
