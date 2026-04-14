@@ -70,6 +70,8 @@ export const mediaWork = sqliteTable(
     posterUrl: text("poster_url"),
     nasLibraryPath: text("nas_library_path").notNull(),
     metadataPath: text("metadata_path"),
+    /** 人工锁定字段 JSON：camelCase 键与 ResolvedMeta 一致；agent 回填时合并且不在库中覆盖此列 */
+    userMetaOverridesJson: text("user_meta_overrides_json"),
     searchText: text("search_text").notNull().default(""),
     watchStatus: text("watch_status").notNull().default("unwatched"),
     watchedAt: integer("watched_at", { mode: "timestamp" }),

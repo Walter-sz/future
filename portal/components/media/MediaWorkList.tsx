@@ -1,6 +1,6 @@
 import Link from "next/link";
 import type { MediaWorkCard } from "@/lib/media-data";
-import { WatchStatusBadge } from "@/components/media/WatchStatusBadge";
+import { MediaWatchResourceStack } from "@/components/media/MediaWatchResourceStack";
 
 function scoreText(score: number | null) {
   if (score == null) return "—";
@@ -35,7 +35,13 @@ export function MediaWorkList({ works, collectionSlug }: ListProps) {
             className="group flex h-full flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm transition hover:border-amber-300/80 hover:shadow-md"
           >
             <div className="relative aspect-[2/3] w-full shrink-0 overflow-hidden bg-slate-100">
-              <WatchStatusBadge status={w.watchStatus} variant="poster" />
+              <div className="pointer-events-none absolute right-2 top-2 z-10 sm:right-2.5 sm:top-2.5">
+                <MediaWatchResourceStack
+                  watchStatus={w.watchStatus}
+                  hasIndexedPlayableResource={w.hasIndexedPlayableResource}
+                  pointerEventsNone
+                />
+              </div>
               {w.posterUrl ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img

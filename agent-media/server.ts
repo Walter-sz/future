@@ -1294,7 +1294,7 @@ function getDb() {
         normalized_title TEXT NOT NULL DEFAULT '',media_type TEXT NOT NULL DEFAULT 'movie',year INTEGER,country TEXT,language TEXT,
         tmdb_type TEXT,tmdb_id INTEGER,tmdb_rating REAL,douban_rating REAL,match_status TEXT NOT NULL DEFAULT 'unresolved',summary TEXT,
         directors_json TEXT NOT NULL DEFAULT '[]',actors_json TEXT NOT NULL DEFAULT '[]',poster_url TEXT,nas_library_path TEXT NOT NULL,
-        metadata_path TEXT,search_text TEXT NOT NULL DEFAULT '',watch_status TEXT NOT NULL DEFAULT 'unwatched',watched_at INTEGER,
+        metadata_path TEXT,user_meta_overrides_json TEXT,search_text TEXT NOT NULL DEFAULT '',watch_status TEXT NOT NULL DEFAULT 'unwatched',watched_at INTEGER,
         created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL
       );
       CREATE UNIQUE INDEX IF NOT EXISTS media_work_path_unique ON media_work(nas_library_path);
@@ -1311,6 +1311,7 @@ function getDb() {
       const names = new Set(cols.map((c) => c.name));
       if (!names.has("watch_status")) db.exec(`ALTER TABLE media_work ADD COLUMN watch_status TEXT NOT NULL DEFAULT 'unwatched'`);
       if (!names.has("watched_at")) db.exec(`ALTER TABLE media_work ADD COLUMN watched_at INTEGER`);
+      if (!names.has("user_meta_overrides_json")) db.exec(`ALTER TABLE media_work ADD COLUMN user_meta_overrides_json TEXT`);
     } catch {
       /* ignore */
     }
@@ -1318,20 +1319,107 @@ function getDb() {
   }
   return db;
 }
+
+function readUserMetaOverridesJsonForNas(raw: Database.Database, nasPath: string): string | null {
+  const row = raw
+    .prepare("SELECT user_meta_overrides_json AS j FROM media_work WHERE nas_library_path = ?")
+    .get(nasPath) as { j: string | null } | undefined;
+  return row?.j?.trim() ? row.j : null;
+}
+
+/** 与 Portal `media-user-meta` 语义对齐：人工锁定字段覆盖 agent 解析结果 */
+function applyUserMetaOverridesToResolvedMeta(meta: ResolvedMeta, nasPath: string): ResolvedMeta {
+  const raw = getDb();
+  const j = readUserMetaOverridesJsonForNas(raw, nasPath);
+  if (!j) return meta;
+  let o: Record<string, unknown>;
+  try {
+    o = JSON.parse(j) as Record<string, unknown>;
+  } catch {
+    return meta;
+  }
+  if (!o || typeof o !== "object") return meta;
+  const m = { ...meta };
+  if (typeof o.titleZh === "string" && o.titleZh.trim()) m.titleZh = o.titleZh.trim();
+  if (typeof o.titleEn === "string") m.titleEn = o.titleEn.trim();
+  if (Object.prototype.hasOwnProperty.call(o, "year")) {
+    if (o.year === null) m.year = null;
+    else if (typeof o.year === "number" && Number.isFinite(o.year)) m.year = Math.round(o.year);
+    else if (typeof o.year === "string" && /^\d{4}$/.test(String(o.year).trim())) m.year = Number(String(o.year).trim());
+  }
+  if (Object.prototype.hasOwnProperty.call(o, "country")) {
+    m.country = o.country === null || o.country === "" ? null : String(o.country);
+  }
+  if (Object.prototype.hasOwnProperty.call(o, "summary")) {
+    m.summary = o.summary === null ? null : String(o.summary ?? "");
+  }
+  if (Object.prototype.hasOwnProperty.call(o, "tmdbRating")) {
+    m.tmdbRating =
+      o.tmdbRating === null || o.tmdbRating === ""
+        ? null
+        : typeof o.tmdbRating === "number"
+          ? o.tmdbRating
+          : Number(o.tmdbRating);
+  }
+  if (Object.prototype.hasOwnProperty.call(o, "doubanRating")) {
+    m.doubanRating =
+      o.doubanRating === null || o.doubanRating === ""
+        ? null
+        : typeof o.doubanRating === "number"
+          ? o.doubanRating
+          : Number(o.doubanRating);
+  }
+  if (Object.prototype.hasOwnProperty.call(o, "mediaType")) {
+    if (o.mediaType === "tv") m.mediaType = "tv";
+    else if (o.mediaType === "movie") m.mediaType = "movie";
+  }
+  m.normalizedTitle = uniqueJoin(m.titleZh, m.titleEn);
+  return m;
+}
+
+function parseUserMetaOverridesObject(j: string | null): Record<string, unknown> | undefined {
+  if (!j?.trim()) return undefined;
+  try {
+    const o = JSON.parse(j) as Record<string, unknown>;
+    return o && typeof o === "object" ? o : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function upsertIndex(meta: ResolvedMeta, metadataPath: string, nasPath: string) {
   const raw = getDb();
   ensureMediaTagSeeds(raw);
   const now = Date.now();
+  const preservedUserMeta = readUserMetaOverridesJsonForNas(raw, nasPath);
   const searchText = [meta.titleZh, meta.titleEn, meta.summary || "", meta.directors.join(" "), meta.actors.join(" "), meta.tags.join(" "), meta.country || ""].join(" ").trim();
-  raw.prepare(`INSERT INTO media_work(title_zh,title_en,normalized_title,media_type,year,country,language,tmdb_type,tmdb_id,tmdb_rating,douban_rating,match_status,summary,directors_json,actors_json,poster_url,nas_library_path,metadata_path,search_text,watch_status,watched_at,created_at,updated_at)
-    VALUES(@titleZh,@titleEn,@normalizedTitle,@mediaType,@year,@country,@language,@tmdbType,@tmdbId,@tmdbRating,@doubanRating,@matchStatus,@summary,@directorsJson,@actorsJson,@posterUrl,@nasLibraryPath,@metadataPath,@searchText,'unwatched',NULL,@now,@now)
+  raw.prepare(`INSERT INTO media_work(title_zh,title_en,normalized_title,media_type,year,country,language,tmdb_type,tmdb_id,tmdb_rating,douban_rating,match_status,summary,directors_json,actors_json,poster_url,nas_library_path,metadata_path,user_meta_overrides_json,search_text,watch_status,watched_at,created_at,updated_at)
+    VALUES(@titleZh,@titleEn,@normalizedTitle,@mediaType,@year,@country,@language,@tmdbType,@tmdbId,@tmdbRating,@doubanRating,@matchStatus,@summary,@directorsJson,@actorsJson,@posterUrl,@nasLibraryPath,@metadataPath,@preservedUserMeta,@searchText,'unwatched',NULL,@now,@now)
     ON CONFLICT(nas_library_path) DO UPDATE SET
       title_zh=excluded.title_zh,title_en=excluded.title_en,normalized_title=excluded.normalized_title,media_type=excluded.media_type,year=excluded.year,country=excluded.country,language=excluded.language,
       tmdb_type=excluded.tmdb_type,tmdb_id=excluded.tmdb_id,tmdb_rating=excluded.tmdb_rating,douban_rating=excluded.douban_rating,match_status=excluded.match_status,summary=excluded.summary,
-      directors_json=excluded.directors_json,actors_json=excluded.actors_json,poster_url=excluded.poster_url,metadata_path=excluded.metadata_path,search_text=excluded.search_text,updated_at=excluded.updated_at`).run({
-    titleZh: meta.titleZh, titleEn: meta.titleEn || "", normalizedTitle: meta.normalizedTitle, mediaType: meta.mediaType, year: meta.year, country: meta.country, language: meta.language,
-    tmdbType: meta.tmdbType, tmdbId: meta.tmdbId, tmdbRating: meta.tmdbRating, doubanRating: meta.doubanRating, matchStatus: meta.matchStatus, summary: meta.summary,
-    directorsJson: JSON.stringify(meta.directors), actorsJson: JSON.stringify(meta.actors), posterUrl: meta.posterUrl, nasLibraryPath: nasPath, metadataPath, searchText, now,
+      directors_json=excluded.directors_json,actors_json=excluded.actors_json,poster_url=excluded.poster_url,metadata_path=excluded.metadata_path,user_meta_overrides_json=excluded.user_meta_overrides_json,search_text=excluded.search_text,updated_at=excluded.updated_at`).run({
+    titleZh: meta.titleZh,
+    titleEn: meta.titleEn || "",
+    normalizedTitle: meta.normalizedTitle,
+    mediaType: meta.mediaType,
+    year: meta.year,
+    country: meta.country,
+    language: meta.language,
+    tmdbType: meta.tmdbType,
+    tmdbId: meta.tmdbId,
+    tmdbRating: meta.tmdbRating,
+    doubanRating: meta.doubanRating,
+    matchStatus: meta.matchStatus,
+    summary: meta.summary,
+    directorsJson: JSON.stringify(meta.directors),
+    actorsJson: JSON.stringify(meta.actors),
+    posterUrl: meta.posterUrl,
+    nasLibraryPath: nasPath,
+    metadataPath,
+    preservedUserMeta: preservedUserMeta ?? null,
+    searchText,
+    now,
   });
   const row = raw.prepare("SELECT id FROM media_work WHERE nas_library_path = ?").get(nasPath) as { id: number } | undefined;
   if (row?.id) syncWorkTags(raw, row.id, meta.tagSlugs || []);
@@ -1396,12 +1484,16 @@ const graph = new StateGraph(ItemState)
       return {};
     }
     const nasPathForIndex = skipMove ? state.candidate.sourcePath : state.dryRun ? state.candidate.sourcePath : targetPath;
-    const metadataPath = path.join(getMediaMetadataCacheDir(), `${slugify(state.metadata.titleZh)}-${Date.now()}.json`);
+    const mergedMeta = applyUserMetaOverridesToResolvedMeta(state.metadata, nasPathForIndex);
+    const metadataPath = path.join(getMediaMetadataCacheDir(), `${slugify(mergedMeta.titleZh)}-${Date.now()}.json`);
+    const userOvRaw = readUserMetaOverridesJsonForNas(getDb(), nasPathForIndex);
+    const userOvObj = parseUserMetaOverridesObject(userOvRaw);
     fs.writeFileSync(
       metadataPath,
       JSON.stringify(
         {
-          ...state.metadata,
+          ...mergedMeta,
+          ...(userOvObj ? { userMetaOverrides: userOvObj } : {}),
           sourcePath: state.candidate.sourcePath,
           targetPath: skipMove ? state.candidate.sourcePath : targetPath,
           generatedAt: nowIso(),
@@ -1413,7 +1505,7 @@ const graph = new StateGraph(ItemState)
       ),
       "utf8"
     );
-    upsertIndex(state.metadata, metadataPath, nasPathForIndex);
+    upsertIndex(mergedMeta, metadataPath, nasPathForIndex);
     appendRunEvent(state.runId, {
       level: "info",
       node: "persist",

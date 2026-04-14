@@ -1,11 +1,17 @@
-import { and, desc, eq, inArray, like, not, notExists, or, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, like, notExists, or, sql } from "drizzle-orm";
 import { getDb } from "@/lib/db";
 import { mediaTag, mediaWork, mediaWorkTag } from "@/lib/db/schema";
 import {
+  isTvExtraCountryOriginSlug,
   sqlTvOriginLooksUk,
   sqlTvOriginLooksUs,
+  sqlTvOriginOtherTvResidual,
+  TV_EXTRA_COUNTRY_ORIGIN_SLUGS,
+  tvExtraCountryOriginCondition,
+  isNasLibraryPathIndexedPlayable,
   whereNasPathIsIndexedLibrary,
 } from "@/lib/media-library-filter";
+import { parseUserMetaOverridesJson, type UserMetaOverrides } from "@/lib/media-user-meta";
 
 /** 用于「其他」合集：无以下任一类型 tag 的电影 */
 export const MAINSTREAM_MEDIA_TAG_SLUGS = [
@@ -50,6 +56,14 @@ export type MediaWorkCard = {
   watchStatus: string;
   directorsPreview: string;
   actorsPreview: string;
+  /** 人工锁定字段（有键表示 agent 回填不会覆盖该字段） */
+  userMetaOverrides?: UserMetaOverrides;
+  nasLibraryPath?: string;
+  /** 是否在已索引资源库路径下（与列表筛选一致；仅元数据占位路径为 false） */
+  hasIndexedPlayableResource: boolean;
+  metadataPath?: string | null;
+  directorsJson?: string;
+  actorsJson?: string;
 };
 
 const COLLECTION_DEFS: Omit<MediaCollection, "count">[] = [
@@ -68,11 +82,27 @@ const COLLECTION_DEFS: Omit<MediaCollection, "count">[] = [
   { slug: "family", title: "家庭片", description: "家庭与儿童向剧情" },
   { slug: "history", title: "历史片", description: "历史与传记题材" },
   { slug: "mystery", title: "推理片", description: "推理与侦探题材" },
-  { slug: "us-tv", title: "美剧", description: "含美国出品/合拍；同一部也可同时出现在英剧" },
-  { slug: "uk-tv", title: "英剧", description: "含英国出品/合拍；同一部也可同时出现在美剧" },
-  { slug: "other-tv", title: "其他剧集", description: "产地信息既不偏美也不偏英的剧集" },
+  { slug: "us-tv", title: "美剧", description: "含美国出品/合拍；同一部也可同时出现在英剧或其他国家合集" },
+  { slug: "uk-tv", title: "英剧", description: "含英国出品/合拍；同一部也可同时出现在美剧或其他国家合集" },
+  { slug: "ca-tv", title: "加拿大剧", description: "含加拿大出品/合拍；可与美剧等重叠（如美加合拍）" },
+  { slug: "au-tv", title: "澳大利亚剧", description: "含澳大利亚出品/合拍；可与美剧等重叠" },
+  { slug: "jp-tv", title: "日本剧", description: "含日本出品/合拍" },
+  { slug: "kr-tv", title: "韩国剧", description: "含韩国出品/合拍" },
+  { slug: "cn-tv", title: "中国剧", description: "含中国大陆出品/合拍（中英文常见写法）" },
+  { slug: "fr-tv", title: "法国剧", description: "含法国出品/合拍" },
+  { slug: "de-tv", title: "德国剧", description: "含德国出品/合拍" },
+  { slug: "it-tv", title: "意大利剧", description: "含意大利出品/合拍" },
+  { slug: "es-tv", title: "西班牙剧", description: "含西班牙出品/合拍" },
+  {
+    slug: "other-tv",
+    title: "其他剧集",
+    description: "产地未命中美、英及上述国家合集的剧集（如印度、北欧等）",
+  },
   { slug: "other", title: "其他电影", description: "未归入以上主流类型的电影" },
 ];
+
+/** 影视资源页「电视剧」区块的合集 slug；其余合集归入「电影」区块 */
+export const MEDIA_TV_COLLECTION_SLUGS = ["us-tv", "uk-tv", ...TV_EXTRA_COUNTRY_ORIGIN_SLUGS, "other-tv"] as const;
 
 export function getCollectionMeta(slug: string) {
   return COLLECTION_DEFS.find((c) => c.slug === slug);
@@ -101,7 +131,8 @@ function workToCard(
   r: typeof mediaWork.$inferSelect,
   tagsMap: Map<number, string[]>
 ): MediaWorkCard {
-  return {
+  const userMetaOverrides = parseUserMetaOverridesJson(r.userMetaOverridesJson);
+  const card: MediaWorkCard = {
     id: r.id,
     titleZh: r.titleZh,
     titleEn: r.titleEn,
@@ -118,7 +149,14 @@ function workToCard(
     watchStatus: r.watchStatus ?? "unwatched",
     directorsPreview: previewPeople(r.directorsJson, 3),
     actorsPreview: previewPeople(r.actorsJson, 4),
+    nasLibraryPath: r.nasLibraryPath,
+    hasIndexedPlayableResource: isNasLibraryPathIndexedPlayable(r.nasLibraryPath),
+    metadataPath: r.metadataPath,
+    directorsJson: r.directorsJson,
+    actorsJson: r.actorsJson,
   };
+  if (Object.keys(userMetaOverrides).length > 0) card.userMetaOverrides = userMetaOverrides;
+  return card;
 }
 
 async function tagsByWorkIds(workIds: number[]) {
@@ -200,7 +238,7 @@ export async function getMediaCollectionCounts(): Promise<MediaCollection[]> {
         .from(mediaWork)
         .where(and(eq(mediaWork.mediaType, "tv"), whereNasPathIsIndexedLibrary(), sqlTvOriginLooksUk()));
       counts.set(def.slug, r[0]?.c ?? 0);
-    } else if (def.slug === "other-tv") {
+    } else if (isTvExtraCountryOriginSlug(def.slug)) {
       const r = await db
         .select({ c: sql<number>`count(*)` })
         .from(mediaWork)
@@ -208,10 +246,15 @@ export async function getMediaCollectionCounts(): Promise<MediaCollection[]> {
           and(
             eq(mediaWork.mediaType, "tv"),
             whereNasPathIsIndexedLibrary(),
-            not(sqlTvOriginLooksUs()),
-            not(sqlTvOriginLooksUk())
+            tvExtraCountryOriginCondition(def.slug)
           )
         );
+      counts.set(def.slug, r[0]?.c ?? 0);
+    } else if (def.slug === "other-tv") {
+      const r = await db
+        .select({ c: sql<number>`count(*)` })
+        .from(mediaWork)
+        .where(and(eq(mediaWork.mediaType, "tv"), whereNasPathIsIndexedLibrary(), sqlTvOriginOtherTvResidual()));
       counts.set(def.slug, r[0]?.c ?? 0);
     } else if (def.slug === "other") {
       counts.set(def.slug, await countOtherMovies());
@@ -239,7 +282,7 @@ export async function getWorksByCollection(collectionSlug: string): Promise<Medi
       .from(mediaWork)
       .where(and(eq(mediaWork.mediaType, "tv"), whereNasPathIsIndexedLibrary(), sqlTvOriginLooksUk()))
       .orderBy(desc(mediaWork.updatedAt));
-  } else if (collectionSlug === "other-tv") {
+  } else if (isTvExtraCountryOriginSlug(collectionSlug)) {
     rows = await db
       .select()
       .from(mediaWork)
@@ -247,10 +290,15 @@ export async function getWorksByCollection(collectionSlug: string): Promise<Medi
         and(
           eq(mediaWork.mediaType, "tv"),
           whereNasPathIsIndexedLibrary(),
-          not(sqlTvOriginLooksUs()),
-          not(sqlTvOriginLooksUk())
+          tvExtraCountryOriginCondition(collectionSlug)
         )
       )
+      .orderBy(desc(mediaWork.updatedAt));
+  } else if (collectionSlug === "other-tv") {
+    rows = await db
+      .select()
+      .from(mediaWork)
+      .where(and(eq(mediaWork.mediaType, "tv"), whereNasPathIsIndexedLibrary(), sqlTvOriginOtherTvResidual()))
       .orderBy(desc(mediaWork.updatedAt));
   } else if (collectionSlug === "other") {
     const slugList = [...MAINSTREAM_MEDIA_TAG_SLUGS];
@@ -273,7 +321,14 @@ export async function getWorksByCollection(collectionSlug: string): Promise<Medi
         )
       )
       .orderBy(desc(mediaWork.updatedAt));
-  } else if (COLLECTION_DEFS.some((c) => c.slug === collectionSlug && c.slug !== "other")) {
+  } else if (
+    COLLECTION_DEFS.some(
+      (c) =>
+        c.slug === collectionSlug &&
+        c.slug !== "other" &&
+        !(MEDIA_TV_COLLECTION_SLUGS as readonly string[]).includes(c.slug)
+    )
+  ) {
     rows = await db
       .select({ work: mediaWork })
       .from(mediaWork)

@@ -41,7 +41,7 @@ export function WatchStatusControl({ workId, initialStatus }: Props) {
     <div className="rounded-xl border-2 border-slate-200/90 bg-gradient-to-b from-slate-50 to-white p-4 shadow-sm">
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <p className="text-sm font-semibold text-slate-900">观影状态</p>
-        <WatchStatusBadge status={status} variant="inline" />
+        <WatchStatusBadge status={status} />
       </div>
       <div className="flex flex-wrap gap-2">
         <button

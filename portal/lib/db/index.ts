@@ -45,6 +45,19 @@ function migrateMediaWorkWatchColumns(raw: Database.Database) {
   }
 }
 
+function migrateMediaWorkUserMetaOverridesColumn(raw: Database.Database) {
+  try {
+    const rows = raw.prepare("PRAGMA table_info(media_work)").all() as { name: string }[];
+    if (rows.length === 0) return;
+    const names = new Set(rows.map((r) => r.name));
+    if (!names.has("user_meta_overrides_json")) {
+      raw.exec(`ALTER TABLE media_work ADD COLUMN user_meta_overrides_json TEXT`);
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
 const MEDIA_TAG_SEED_ROWS: [string, string][] = [
   ["action", "动作"],
   ["comedy", "喜剧"],
@@ -130,6 +143,7 @@ function ensureSchema(raw: Database.Database) {
       poster_url TEXT,
       nas_library_path TEXT NOT NULL,
       metadata_path TEXT,
+      user_meta_overrides_json TEXT,
       search_text TEXT NOT NULL DEFAULT '',
       watch_status TEXT NOT NULL DEFAULT 'unwatched',
       watched_at INTEGER,
@@ -171,6 +185,7 @@ function ensureSchema(raw: Database.Database) {
   `);
   migrateWeeklySpeedIllinoisRun(raw);
   migrateMediaWorkWatchColumns(raw);
+  migrateMediaWorkUserMetaOverridesColumn(raw);
   seedMediaTags(raw);
   const now = Date.now();
   raw

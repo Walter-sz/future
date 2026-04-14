@@ -34,6 +34,12 @@ export function getWalterAgents(): WalterAgent[] {
       ready: true,
     },
     {
+      slug: "wealth",
+      title: "财富管理 Agent",
+      description: "资产与负债总览、预算目标、收支归因与提醒（待接入）",
+      ready: false,
+    },
+    {
       slug: "news",
       title: "时事资讯 Agent",
       description: "订阅聚合、摘要与要点推送（待接入）",

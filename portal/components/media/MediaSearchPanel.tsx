@@ -1,9 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
-import { WatchStatusBadge } from "@/components/media/WatchStatusBadge";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useEffect, useState } from "react";
+import { MediaWatchResourceStack } from "@/components/media/MediaWatchResourceStack";
 import type { MediaWorkCard } from "@/lib/media-data";
+import { moviesWorkDetailHref } from "@/lib/movies-search-q";
 
 type SearchResp = {
   ok: boolean;
@@ -11,42 +13,71 @@ type SearchResp = {
   items: MediaWorkCard[];
 };
 
+const Q_PARAM = "q";
+
 export function MediaSearchPanel() {
-  const [query, setQuery] = useState("");
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const qFromUrl = searchParams.get(Q_PARAM) ?? "";
+
+  const [query, setQuery] = useState(qFromUrl);
   const [loading, setLoading] = useState(false);
   const [resp, setResp] = useState<SearchResp | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  async function onSearch(e: React.FormEvent) {
-    e.preventDefault();
-    if (!query.trim()) {
-      setResp({ ok: true, query: "", items: [] });
+  useEffect(() => {
+    setQuery(qFromUrl);
+    const trimmed = qFromUrl.trim();
+    if (!trimmed) {
+      setResp(null);
+      setError(null);
+      setLoading(false);
       return;
     }
+
+    const ac = new AbortController();
     setLoading(true);
     setError(null);
-    try {
-      const r = await fetch("/api/media/search", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query: query.trim() }),
+    fetch("/api/media/search", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query: trimmed }),
+      signal: ac.signal,
+    })
+      .then(async (r) => {
+        const data = (await r.json()) as SearchResp;
+        if (!r.ok || !data.ok) throw new Error("搜索接口返回异常");
+        if (!ac.signal.aborted) setResp(data);
+      })
+      .catch((err) => {
+        if (ac.signal.aborted) return;
+        setResp(null);
+        setError(err instanceof Error ? err.message : "搜索失败");
+      })
+      .finally(() => {
+        if (!ac.signal.aborted) setLoading(false);
       });
-      const data = (await r.json()) as SearchResp;
-      if (!r.ok || !data.ok) {
-        throw new Error("搜索接口返回异常");
-      }
-      setResp(data);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "搜索失败");
-    } finally {
-      setLoading(false);
+
+    return () => ac.abort();
+  }, [qFromUrl]);
+
+  function onSearch(e: React.FormEvent) {
+    e.preventDefault();
+    const trimmed = query.trim();
+    if (!trimmed) {
+      router.replace(pathname, { scroll: false });
+      return;
     }
+    const next = new URLSearchParams(searchParams.toString());
+    next.set(Q_PARAM, trimmed);
+    router.replace(`${pathname}?${next.toString()}`, { scroll: false });
   }
 
   return (
     <section aria-labelledby="media-search-title" className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
       <h2 id="media-search-title" className="mb-2 text-lg font-semibold text-slate-900">
-        自然语言搜索
+        资源搜索
       </h2>
       <p className="mb-4 text-sm text-slate-600">
         可按名称、导演、演员、剧情等关键词搜索。首版使用文本匹配，后续可升级语义向量检索。
@@ -88,15 +119,18 @@ export function MediaSearchPanel() {
                     )}
                   </div>
                   <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-center gap-2">
+                    <div className="flex flex-wrap items-start gap-x-2 gap-y-1.5">
                       <Link
-                        href={`/movies/work/${item.id}`}
-                        className="min-w-0 text-sm font-medium text-slate-900 hover:text-amber-700"
+                        href={moviesWorkDetailHref(item.id, qFromUrl.trim() ? qFromUrl : null)}
+                        className="min-w-0 flex-1 text-sm font-medium text-slate-900 hover:text-amber-700"
                       >
                         {item.titleZh}
                         {item.titleEn ? ` / ${item.titleEn}` : ""}
                       </Link>
-                      <WatchStatusBadge status={item.watchStatus} variant="inline" />
+                      <MediaWatchResourceStack
+                        watchStatus={item.watchStatus}
+                        hasIndexedPlayableResource={item.hasIndexedPlayableResource}
+                      />
                     </div>
                     <p className="mt-1 text-xs text-slate-500">
                       {item.mediaType === "tv" ? "剧集" : "电影"} · {item.year ?? "年份未知"} ·{" "}
