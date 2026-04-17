@@ -2,7 +2,7 @@ import Link from "next/link";
 import { headers } from "next/headers";
 import { notFound } from "next/navigation";
 import { MediaWorkDetailArticle } from "@/components/media/MediaWorkDetailArticle";
-import { getCollectionMeta, getMediaWorkById } from "@/lib/media-data";
+import { getCollectionMeta, getMediaWorkById, listMainstreamMovieGenreTags } from "@/lib/media-data";
 import { moviesHomeHrefWithSearchQ, parseMoviesSearchQ } from "@/lib/movies-search-q";
 
 type Props = {
@@ -60,6 +60,12 @@ export default async function MediaWorkDetailPage({ params, searchParams }: Prop
   const item = await getMediaWorkById(numeric);
   if (!item) notFound();
 
+  const genreRows = await listMainstreamMovieGenreTags();
+  const genreOptions = genreRows.map((o) => ({
+    slug: o.slug,
+    label: getCollectionMeta(o.slug)?.title ?? o.name,
+  }));
+
   const directors = parseJsonArray(item.directorsJson);
   const actors = parseJsonArray(item.actorsJson);
   const tagNames = item.tags;
@@ -83,7 +89,14 @@ export default async function MediaWorkDetailPage({ params, searchParams }: Prop
         ) : null}
       </div>
       <article className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-        <MediaWorkDetailArticle workId={numeric} item={item} directors={directors} actors={actors} tagNames={tagNames} />
+        <MediaWorkDetailArticle
+          workId={numeric}
+          item={item}
+          directors={directors}
+          actors={actors}
+          tagNames={tagNames}
+          genreOptions={genreOptions}
+        />
       </article>
     </div>
   );

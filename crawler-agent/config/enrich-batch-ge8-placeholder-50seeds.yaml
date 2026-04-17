@@ -1,0 +1,158 @@
+# 第三批：占位电影（meta:douban:）作为种子，douban_rating >= 8，按分降序取前 50 条。
+# 占位电影本身已有详情数据，再走一跳扩散可挖到「推荐的推荐」（second-hop）。
+# 命令行等价：
+#   WALTER_DATA_DIR=../walter_data PYTHONPATH=src python -m crawler_agent.tools.enrich_library_douban \
+#     --all-library --min-douban-rating 8 --movie-only --seed-source placeholder --limit 50 --expand-recommendations
+
+expand_recommendations: true
+entries:
+- search_title: 剧院魅影：25周年纪念演出
+  nas_library_path: meta:douban:24751811
+  kind_hint: movie
+- search_title: 银魂 第二季 銀魂'
+  nas_library_path: meta:douban:4888015
+  kind_hint: movie
+- search_title: 泰坦尼克号
+  nas_library_path: meta:douban:1292722
+  kind_hint: movie
+- search_title: 高山下的花环
+  nas_library_path: meta:douban:1422283
+  kind_hint: movie
+- search_title: 辛德勒的名单
+  nas_library_path: meta:douban:1295124
+  kind_hint: movie
+- search_title: 美丽人生
+  nas_library_path: meta:douban:1292063
+  kind_hint: movie
+- search_title: 背靠背，脸对脸
+  nas_library_path: meta:douban:1307856
+  kind_hint: movie
+- search_title: 平衡
+  nas_library_path: meta:douban:1958031
+  kind_hint: movie
+- search_title: 钢之炼金术师FA 鋼の錬金術師
+  nas_library_path: meta:douban:3430169
+  kind_hint: movie
+- search_title: 海贼王 ワンピース
+  nas_library_path: meta:douban:1453238
+  kind_hint: movie
+- search_title: 全职猎人
+  nas_library_path: meta:douban:1460919
+  kind_hint: movie
+- search_title: 数码宝贝 デジモンアドベンチャー
+  nas_library_path: meta:douban:1970134
+  kind_hint: movie
+- search_title: 切腹
+  nas_library_path: meta:douban:1304920
+  kind_hint: movie
+- search_title: 大闹天宫
+  nas_library_path: meta:douban:1418019
+  kind_hint: movie
+- search_title: 忠犬八公的故事
+  nas_library_path: meta:douban:3011091
+  kind_hint: movie
+- search_title: 楚门的世界
+  nas_library_path: meta:douban:1292064
+  kind_hint: movie
+- search_title: 盗梦空间
+  nas_library_path: meta:douban:3541415
+  kind_hint: movie
+- search_title: 星际穿越
+  nas_library_path: meta:douban:1889243
+  kind_hint: movie
+- search_title: 这个杀手不太冷
+  nas_library_path: meta:douban:1295644
+  kind_hint: movie
+- search_title: 千与千寻 千と千尋の神隠し
+  nas_library_path: meta:douban:1291561
+  kind_hint: movie
+- search_title: 英国国家剧院50周年庆典
+  nas_library_path: meta:douban:25760611
+  kind_hint: movie
+- search_title: 汉密尔顿的美国
+  nas_library_path: meta:douban:26892562
+  kind_hint: movie
+- search_title: 旅行者号：冲出太阳系
+  nas_library_path: meta:douban:23117105
+  kind_hint: movie
+- search_title: 地平线系列：再见卡西尼号，你好土星
+  nas_library_path: meta:douban:27168790
+  kind_hint: movie
+- search_title: 虫师 蟲師
+  nas_library_path: meta:douban:1800597
+  kind_hint: movie
+- search_title: 乱世佳人
+  nas_library_path: meta:douban:1300267
+  kind_hint: movie
+- search_title: 鬼子来了
+  nas_library_path: meta:douban:1291858
+  kind_hint: movie
+- search_title: 触不可及
+  nas_library_path: meta:douban:6786002
+  kind_hint: movie
+- search_title: 活着
+  nas_library_path: meta:douban:1292365
+  kind_hint: movie
+- search_title: 地球之盐
+  nas_library_path: meta:douban:10741871
+  kind_hint: movie
+- search_title: 万物与虚无
+  nas_library_path: meta:douban:6872214
+  kind_hint: movie
+- search_title: 摇滚莫扎特
+  nas_library_path: meta:douban:25754522
+  kind_hint: movie
+- search_title: 黄金三镖客
+  nas_library_path: meta:douban:1401118
+  kind_hint: movie
+- search_title: 钢琴家
+  nas_library_path: meta:douban:1296736
+  kind_hint: movie
+- search_title: 回忆积木小屋 つみきのいえ
+  nas_library_path: meta:douban:3560787
+  kind_hint: movie
+- search_title: 教父2
+  nas_library_path: meta:douban:1299131
+  kind_hint: movie
+- search_title: 无间道 無間道
+  nas_library_path: meta:douban:1307914
+  kind_hint: movie
+- search_title: 七武士 七人の侍
+  nas_library_path: meta:douban:1295399
+  kind_hint: movie
+- search_title: 城市之光
+  nas_library_path: meta:douban:1293908
+  kind_hint: movie
+- search_title: 素媛 소원
+  nas_library_path: meta:douban:21937452
+  kind_hint: movie
+- search_title: 摩登时代
+  nas_library_path: meta:douban:1294371
+  kind_hint: movie
+- search_title: 冰山的阴影
+  nas_library_path: meta:douban:5157872
+  kind_hint: movie
+- search_title: 发现的乐趣
+  nas_library_path: meta:douban:10554714
+  kind_hint: movie
+- search_title: 死亡诗社
+  nas_library_path: meta:douban:1291548
+  kind_hint: movie
+- search_title: 天堂电影院
+  nas_library_path: meta:douban:1291828
+  kind_hint: movie
+- search_title: 窃听风暴
+  nas_library_path: meta:douban:1900841
+  kind_hint: movie
+- search_title: 天空之城 天空の城ラピュタ
+  nas_library_path: meta:douban:1291583
+  kind_hint: movie
+- search_title: 哪吒闹海
+  nas_library_path: meta:douban:1307315
+  kind_hint: movie
+- search_title: 哈利·波特与魔法石
+  nas_library_path: meta:douban:1295038
+  kind_hint: movie
+- search_title: 家园
+  nas_library_path: meta:douban:3018123
+  kind_hint: movie

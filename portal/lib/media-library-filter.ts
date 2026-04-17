@@ -14,7 +14,11 @@ export function whereNasPathIsIndexedLibrary(): SQL {
   const root = getNasLibraryRootForFilter();
   return and(
     sql`coalesce(${mediaWork.nasLibraryPath}, '') not like ${"%影视资源待入库%"}`,
-    or(eq(mediaWork.nasLibraryPath, root), like(mediaWork.nasLibraryPath, `${root}/%`))
+    or(
+      eq(mediaWork.nasLibraryPath, root),
+      like(mediaWork.nasLibraryPath, `${root}/%`),
+      like(mediaWork.nasLibraryPath, "meta:douban:%"),
+    )
   ) as SQL;
 }
 
@@ -26,6 +30,14 @@ export function isNasLibraryPathIndexedPlayable(nasPath: string | null | undefin
   if (!p || p.includes("影视资源待入库")) return false;
   const root = getNasLibraryRootForFilter();
   return p === root || p.startsWith(`${root}/`);
+}
+
+/** 列表卡片至少需要中文名或外文名其一非空（排除未填充的占位行） */
+export function whereMediaWorkHasDisplayTitle(): SQL {
+  return sql`(
+    trim(coalesce(${mediaWork.titleZh}, '')) != ''
+    or trim(coalesce(${mediaWork.titleEn}, '')) != ''
+  )` as SQL;
 }
 
 /** TMDB 常用 GB；部分数据或 Gemini 会写 UK / United Kingdom / 英国 */

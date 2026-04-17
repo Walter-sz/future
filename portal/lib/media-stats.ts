@@ -15,12 +15,12 @@ export type MediaGenreSlice = {
   value: number;
 };
 
-export type MediaWeeklyWatchStat = {
-  /** 周起始（UTC 周一）YYYY-MM-DD，与 tooltip 对齐 */
-  weekMondayYmd: string;
-  /** 短标签，如 01/06 */
-  weekShortLabel: string;
-  /** 该自然周内首次标记为已看的部数（电影+剧集合计） */
+export type MediaMonthlyWatchStat = {
+  /** 月份 YYYY-MM */
+  monthYm: string;
+  /** 短标签，如 2018/08 */
+  monthShortLabel: string;
+  /** 该自然月内标记为已看的部数（电影+剧集合计） */
   watchedAddedCount: number;
 };
 
@@ -30,9 +30,9 @@ export type MediaLibraryDashboardStats = {
   movieCollectionDistribution: MediaGenreSlice[];
   /** 与下方美剧 / 英剧 / 其他剧集卡片人数一致；美剧与英剧计数可能重叠 */
   tvCollectionDistribution: MediaGenreSlice[];
-  weeklyWatch: {
-    weeks: MediaWeeklyWatchStat[];
-    /** 当前库内未看总部数（非按周历史） */
+  monthlyWatch: {
+    months: MediaMonthlyWatchStat[];
+    /** 当前库内未看总部数（非按月历史） */
     currentUnwatchedTotal: number;
   };
 };
@@ -108,18 +108,15 @@ export async function getMediaYearDistribution(): Promise<MediaYearStatRow[]> {
   }));
 }
 
-export async function getWeeklyWatchedAddedByWeek(): Promise<{
-  weeks: MediaWeeklyWatchStat[];
+function formatYm(d: Date): string {
+  return `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}`;
+}
+
+export async function getMonthlyWatchedAdded(): Promise<{
+  months: MediaMonthlyWatchStat[];
   currentUnwatchedTotal: number;
 }> {
   const db = getDb();
-  const endMonday = utcMondayOf(new Date());
-  const startMonday = addUtcDays(endMonday, -51 * 7);
-  const weekKeys: string[] = [];
-  for (let i = 0; i < 52; i++) {
-    weekKeys.push(formatUtcYmd(addUtcDays(startMonday, i * 7)));
-  }
-  const weekSet = new Set(weekKeys);
 
   const watchedRows = await db
     .select({ watchedAt: mediaWork.watchedAt })
@@ -132,22 +129,39 @@ export async function getWeeklyWatchedAddedByWeek(): Promise<{
       )
     );
 
-  const byWeek = new Map<string, number>();
-  for (const k of weekKeys) byWeek.set(k, 0);
+  const byMonth = new Map<string, number>();
 
+  let minDate: Date | null = null;
   for (const row of watchedRows) {
     const d = toDate(row.watchedAt);
     if (!d) continue;
-    const mon = utcMondayOf(d);
-    const key = formatUtcYmd(mon);
-    if (!weekSet.has(key)) continue;
-    byWeek.set(key, (byWeek.get(key) ?? 0) + 1);
+    if (!minDate || d < minDate) minDate = d;
+    const key = formatYm(d);
+    byMonth.set(key, (byMonth.get(key) ?? 0) + 1);
   }
 
-  const weeks: MediaWeeklyWatchStat[] = weekKeys.map((weekMondayYmd) => ({
-    weekMondayYmd,
-    weekShortLabel: shortWeekLabel(weekMondayYmd),
-    watchedAddedCount: byWeek.get(weekMondayYmd) ?? 0,
+  const now = new Date();
+  const endYm = formatYm(now);
+  const startYm = minDate ? formatYm(minDate) : endYm;
+
+  const monthKeys: string[] = [];
+  if (minDate) {
+    let y = minDate.getUTCFullYear();
+    let m = minDate.getUTCMonth();
+    const endY = now.getUTCFullYear();
+    const endM = now.getUTCMonth();
+    while (y < endY || (y === endY && m <= endM)) {
+      monthKeys.push(`${y}-${pad2(m + 1)}`);
+      m++;
+      if (m > 11) { m = 0; y++; }
+    }
+  }
+  if (monthKeys.length === 0) monthKeys.push(endYm);
+
+  const months: MediaMonthlyWatchStat[] = monthKeys.map((ym) => ({
+    monthYm: ym,
+    monthShortLabel: ym,
+    watchedAddedCount: byMonth.get(ym) ?? 0,
   }));
 
   const unw = await db
@@ -156,16 +170,16 @@ export async function getWeeklyWatchedAddedByWeek(): Promise<{
     .where(and(whereNasPathIsIndexedLibrary(), ne(mediaWork.watchStatus, "watched")));
 
   return {
-    weeks,
+    months,
     currentUnwatchedTotal: Number(unw[0]?.c ?? 0),
   };
 }
 
 export async function getMediaLibraryDashboardStats(): Promise<MediaLibraryDashboardStats> {
-  const [yearDistribution, collections, weeklyWatch] = await Promise.all([
+  const [yearDistribution, collections, monthlyWatch] = await Promise.all([
     getMediaYearDistribution(),
     getMediaCollectionCounts(),
-    getWeeklyWatchedAddedByWeek(),
+    getMonthlyWatchedAdded(),
   ]);
 
   const { movieCollectionDistribution, tvCollectionDistribution } = splitCollectionCounts(collections);
@@ -174,6 +188,6 @@ export async function getMediaLibraryDashboardStats(): Promise<MediaLibraryDashb
     yearDistribution,
     movieCollectionDistribution,
     tvCollectionDistribution,
-    weeklyWatch,
+    monthlyWatch,
   };
 }

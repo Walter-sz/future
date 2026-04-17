@@ -16,7 +16,7 @@ function partitionCollections(collections: MediaCollection[]) {
 
 function CollectionCardList({ collections }: { collections: MediaCollection[] }) {
   return (
-    <ul className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+    <ul className="grid gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
       {collections.map((c) => (
         <li key={c.slug}>
           <Link

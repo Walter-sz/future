@@ -58,6 +58,26 @@ function migrateMediaWorkUserMetaOverridesColumn(raw: Database.Database) {
   }
 }
 
+function migrateMediaWorkDoubanSubjectId(raw: Database.Database) {
+  try {
+    const rows = raw.prepare("PRAGMA table_info(media_work)").all() as { name: string }[];
+    if (rows.length === 0) return;
+    const names = new Set(rows.map((r) => r.name));
+    if (!names.has("douban_subject_id")) {
+      raw.exec(`ALTER TABLE media_work ADD COLUMN douban_subject_id TEXT`);
+    }
+    try {
+      raw.exec(
+        `CREATE UNIQUE INDEX IF NOT EXISTS media_work_douban_subject_unique ON media_work(douban_subject_id)`
+      );
+    } catch {
+      /* 已有重复非空 id 等 */
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
 const MEDIA_TAG_SEED_ROWS: [string, string][] = [
   ["action", "动作"],
   ["comedy", "喜剧"],
@@ -67,6 +87,7 @@ const MEDIA_TAG_SEED_ROWS: [string, string][] = [
   ["horror", "恐怖"],
   ["animation", "动画"],
   ["war", "战争"],
+  ["western", "西部"],
   ["romance", "爱情"],
   ["documentary", "纪录"],
   ["fantasy", "奇幻"],
@@ -136,6 +157,7 @@ function ensureSchema(raw: Database.Database) {
       tmdb_id INTEGER,
       tmdb_rating REAL,
       douban_rating REAL,
+      douban_subject_id TEXT,
       match_status TEXT NOT NULL DEFAULT 'unresolved',
       summary TEXT,
       directors_json TEXT NOT NULL DEFAULT '[]',
@@ -186,6 +208,7 @@ function ensureSchema(raw: Database.Database) {
   migrateWeeklySpeedIllinoisRun(raw);
   migrateMediaWorkWatchColumns(raw);
   migrateMediaWorkUserMetaOverridesColumn(raw);
+  migrateMediaWorkDoubanSubjectId(raw);
   seedMediaTags(raw);
   const now = Date.now();
   raw

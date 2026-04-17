@@ -1,0 +1,158 @@
+# 第四批：占位电影（meta:douban:）作为种子，douban_rating >= 8，offset 50 limit 50。
+# 承接上一批（前 50 已跑），继续向下取 50 条。
+# 命令行等价：
+#   WALTER_DATA_DIR=../walter_data PYTHONPATH=src python -m crawler_agent.tools.enrich_library_douban \
+#     --all-library --min-douban-rating 8 --movie-only --seed-source placeholder --limit 50 --offset 50 --expand-recommendations
+
+expand_recommendations: true
+entries:
+- search_title: 无间道 無間道
+  nas_library_path: meta:douban:1307914
+  kind_hint: movie
+- search_title: 七武士 七人の侍
+  nas_library_path: meta:douban:1295399
+  kind_hint: movie
+- search_title: 城市之光
+  nas_library_path: meta:douban:1293908
+  kind_hint: movie
+- search_title: 素媛 소원
+  nas_library_path: meta:douban:21937452
+  kind_hint: movie
+- search_title: 摩登时代
+  nas_library_path: meta:douban:1294371
+  kind_hint: movie
+- search_title: 冰山的阴影
+  nas_library_path: meta:douban:5157872
+  kind_hint: movie
+- search_title: 发现的乐趣
+  nas_library_path: meta:douban:10554714
+  kind_hint: movie
+- search_title: 芙蓉镇
+  nas_library_path: meta:douban:1297880
+  kind_hint: movie
+- search_title: 新世纪福音战士 新世紀エヴァンゲリオン
+  nas_library_path: meta:douban:1457573
+  kind_hint: movie
+- search_title: 机器人总动员
+  nas_library_path: meta:douban:2131459
+  kind_hint: movie
+- search_title: 旅行到宇宙边缘
+  nas_library_path: meta:douban:3595323
+  kind_hint: movie
+- search_title: 四叠半神话大系 四畳半神話大系
+  nas_library_path: meta:douban:4195678
+  kind_hint: movie
+- search_title: 死亡诗社
+  nas_library_path: meta:douban:1291548
+  kind_hint: movie
+- search_title: 天堂电影院
+  nas_library_path: meta:douban:1291828
+  kind_hint: movie
+- search_title: 窃听风暴
+  nas_library_path: meta:douban:1900841
+  kind_hint: movie
+- search_title: 天空之城 天空の城ラピュタ
+  nas_library_path: meta:douban:1291583
+  kind_hint: movie
+- search_title: 哪吒闹海
+  nas_library_path: meta:douban:1307315
+  kind_hint: movie
+- search_title: 哈利·波特与魔法石
+  nas_library_path: meta:douban:1295038
+  kind_hint: movie
+- search_title: 家园
+  nas_library_path: meta:douban:3018123
+  kind_hint: movie
+- search_title: 饮食男女 飲食男女
+  nas_library_path: meta:douban:1291818
+  kind_hint: movie
+- search_title: 战争与和平4：皮埃尔·别祖霍夫 Война и мир
+  nas_library_path: meta:douban:1297822
+  kind_hint: movie
+- search_title: 三傻大闹宝莱坞
+  nas_library_path: meta:douban:3793023
+  kind_hint: movie
+- search_title: 阿涅斯论瓦尔达
+  nas_library_path: meta:douban:30423539
+  kind_hint: movie
+- search_title: 穿条纹睡衣的男孩
+  nas_library_path: meta:douban:3008247
+  kind_hint: movie
+- search_title: 小鞋子 بچه های آسمان
+  nas_library_path: meta:douban:1303021
+  kind_hint: movie
+- search_title: 非穷尽列举
+  nas_library_path: meta:douban:37293378
+  kind_hint: movie
+- search_title: 大话西游之大圣娶亲 西遊記大結局之仙履奇緣
+  nas_library_path: meta:douban:1292213
+  kind_hint: movie
+- search_title: 龙猫 となりのトトロ
+  nas_library_path: meta:douban:1291560
+  kind_hint: movie
+- search_title: 蝙蝠侠：黑暗骑士
+  nas_library_path: meta:douban:1851857
+  kind_hint: movie
+- search_title: 淘金记
+  nas_library_path: meta:douban:1298817
+  kind_hint: movie
+- search_title: 寻子遇仙记
+  nas_library_path: meta:douban:1293270
+  kind_hint: movie
+- search_title: 马戏团
+  nas_library_path: meta:douban:1299628
+  kind_hint: movie
+- search_title: 大独裁者
+  nas_library_path: meta:douban:1295646
+  kind_hint: movie
+- search_title: 吉屋出租：百老汇剧场版
+  nas_library_path: meta:douban:24857754
+  kind_hint: movie
+- search_title: 天书奇谭
+  nas_library_path: meta:douban:1428581
+  kind_hint: movie
+- search_title: 大决战之辽沈战役
+  nas_library_path: meta:douban:1424552
+  kind_hint: movie
+- search_title: 最远的地方
+  nas_library_path: meta:douban:27021900
+  kind_hint: movie
+- search_title: 恒星七纪
+  nas_library_path: meta:douban:20370177
+  kind_hint: movie
+- search_title: 男子高中生的日常 男子高校生の日常
+  nas_library_path: meta:douban:6894811
+  kind_hint: movie
+- search_title: 命运之夜前传 第一季
+  nas_library_path: meta:douban:5416070
+  kind_hint: movie
+- search_title: 火影忍者
+  nas_library_path: meta:douban:1427318
+  kind_hint: movie
+- search_title: 精灵宝可梦 ポケットモンスター
+  nas_library_path: meta:douban:2015069
+  kind_hint: movie
+- search_title: 魔卡少女樱 カードキャプターさくら
+  nas_library_path: meta:douban:1465035
+  kind_hint: movie
+- search_title: 费马大定理
+  nas_library_path: meta:douban:4840368
+  kind_hint: movie
+- search_title: 闻香识女人
+  nas_library_path: meta:douban:1298624
+  kind_hint: movie
+- search_title: 罗马假日
+  nas_library_path: meta:douban:1293839
+  kind_hint: movie
+- search_title: 狩猎
+  nas_library_path: meta:douban:6985810
+  kind_hint: movie
+- search_title: 飞越疯人院
+  nas_library_path: meta:douban:1292224
+  kind_hint: movie
+- search_title: 丛林赤子心
+  nas_library_path: meta:douban:1473562
+  kind_hint: movie
+- search_title: 拯救大兵瑞恩
+  nas_library_path: meta:douban:1292849
+  kind_hint: movie

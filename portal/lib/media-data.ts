@@ -9,6 +9,7 @@ import {
   TV_EXTRA_COUNTRY_ORIGIN_SLUGS,
   tvExtraCountryOriginCondition,
   isNasLibraryPathIndexedPlayable,
+  whereMediaWorkHasDisplayTitle,
   whereNasPathIsIndexedLibrary,
 } from "@/lib/media-library-filter";
 import { parseUserMetaOverridesJson, type UserMetaOverrides } from "@/lib/media-user-meta";
@@ -23,6 +24,7 @@ export const MAINSTREAM_MEDIA_TAG_SLUGS = [
   "horror",
   "animation",
   "war",
+  "western",
   "romance",
   "documentary",
   "fantasy",
@@ -47,12 +49,16 @@ export type MediaWorkCard = {
   year: number | null;
   tmdbRating: number | null;
   doubanRating: number | null;
+  /** 豆瓣 subject 数字 id，可空 */
+  doubanSubjectId?: string | null;
   summary: string | null;
   posterUrl: string | null;
   country: string | null;
   language: string | null;
   matchStatus: string;
   tags: string[];
+  /** 已关联的主流电影类型 slug（与「其他电影」合集判定一致） */
+  genreTagSlugs: string[];
   watchStatus: string;
   directorsPreview: string;
   actorsPreview: string;
@@ -75,6 +81,7 @@ const COLLECTION_DEFS: Omit<MediaCollection, "count">[] = [
   { slug: "horror", title: "恐怖片", description: "恐怖题材" },
   { slug: "animation", title: "动画", description: "动画电影与系列" },
   { slug: "war", title: "战争片", description: "战争与军事题材" },
+  { slug: "western", title: "西部片", description: "西部与拓荒题材" },
   { slug: "romance", title: "爱情片", description: "爱情与情感题材" },
   { slug: "documentary", title: "纪录片", description: "纪录类作品" },
   { slug: "fantasy", title: "奇幻片", description: "奇幻与魔幻题材" },
@@ -127,11 +134,16 @@ function previewPeople(jsonText: string | null, max: number) {
   return arr.slice(0, max).join("、");
 }
 
+const MAINSTREAM_MEDIA_TAG_SLUG_SET = new Set<string>(MAINSTREAM_MEDIA_TAG_SLUGS);
+
 function workToCard(
   r: typeof mediaWork.$inferSelect,
-  tagsMap: Map<number, string[]>
+  tagsMap: Map<number, { slug: string; name: string }[]>
 ): MediaWorkCard {
   const userMetaOverrides = parseUserMetaOverridesJson(r.userMetaOverridesJson);
+  const tagPairs = tagsMap.get(r.id) ?? [];
+  const tags = tagPairs.map((t) => t.name);
+  const genreTagSlugs = tagPairs.filter((t) => MAINSTREAM_MEDIA_TAG_SLUG_SET.has(t.slug)).map((t) => t.slug);
   const card: MediaWorkCard = {
     id: r.id,
     titleZh: r.titleZh,
@@ -140,12 +152,14 @@ function workToCard(
     year: r.year,
     tmdbRating: r.tmdbRating,
     doubanRating: r.doubanRating,
+    ...(r.doubanSubjectId?.trim() ? { doubanSubjectId: r.doubanSubjectId.trim() } : {}),
     summary: r.summary,
     posterUrl: r.posterUrl,
     country: r.country,
     language: r.language,
     matchStatus: r.matchStatus,
-    tags: tagsMap.get(r.id) ?? [],
+    tags,
+    genreTagSlugs,
     watchStatus: r.watchStatus ?? "unwatched",
     directorsPreview: previewPeople(r.directorsJson, 3),
     actorsPreview: previewPeople(r.actorsJson, 4),
@@ -160,22 +174,65 @@ function workToCard(
 }
 
 async function tagsByWorkIds(workIds: number[]) {
-  if (workIds.length === 0) return new Map<number, string[]>();
+  if (workIds.length === 0) return new Map<number, { slug: string; name: string }[]>();
   const db = getDb();
   const rows = await db
     .select({
       workId: mediaWorkTag.workId,
-      tagName: mediaTag.name,
+      slug: mediaTag.slug,
+      name: mediaTag.name,
     })
     .from(mediaWorkTag)
     .innerJoin(mediaTag, eq(mediaTag.id, mediaWorkTag.tagId))
     .where(inArray(mediaWorkTag.workId, workIds));
-  const out = new Map<number, string[]>();
+  const out = new Map<number, { slug: string; name: string }[]>();
   for (const row of rows) {
     if (!out.has(row.workId)) out.set(row.workId, []);
-    out.get(row.workId)!.push(row.tagName);
+    out.get(row.workId)!.push({ slug: row.slug, name: row.name });
   }
   return out;
+}
+
+/** 电影详情编辑：可选的主流类型（来自 media_tag，与合集 slug 一致） */
+export async function listMainstreamMovieGenreTags(): Promise<{ slug: string; name: string }[]> {
+  const db = getDb();
+  const slugList = [...MAINSTREAM_MEDIA_TAG_SLUGS] as unknown as string[];
+  const rows = await db
+    .select({ slug: mediaTag.slug, name: mediaTag.name })
+    .from(mediaTag)
+    .where(inArray(mediaTag.slug, slugList));
+  const order = new Map(slugList.map((s, i) => [s, i]));
+  return [...rows].sort((a, b) => (order.get(a.slug) ?? 0) - (order.get(b.slug) ?? 0));
+}
+
+/** 替换该片关联的主流电影类型（不影响其他 tag；仅 movie 应调用） */
+export async function replaceMainstreamGenreTagsForWork(workId: number, slugs: string[]): Promise<void> {
+  const uniq = [...new Set(slugs)];
+  for (const s of uniq) {
+    if (!MAINSTREAM_MEDIA_TAG_SLUG_SET.has(s)) {
+      throw new Error(`无效的类型 slug：${s}`);
+    }
+  }
+  const db = getDb();
+  const mainstreamSlugList = [...MAINSTREAM_MEDIA_TAG_SLUGS] as unknown as string[];
+  const mainstreamRows = await db
+    .select({ id: mediaTag.id })
+    .from(mediaTag)
+    .where(inArray(mediaTag.slug, mainstreamSlugList));
+  const mainstreamIds = mainstreamRows.map((r) => r.id);
+  if (mainstreamIds.length === 0) return;
+
+  await db
+    .delete(mediaWorkTag)
+    .where(and(eq(mediaWorkTag.workId, workId), inArray(mediaWorkTag.tagId, mainstreamIds)));
+
+  if (uniq.length === 0) return;
+  const selected = await db
+    .select({ id: mediaTag.id })
+    .from(mediaTag)
+    .where(inArray(mediaTag.slug, uniq));
+  if (selected.length === 0) return;
+  await db.insert(mediaWorkTag).values(selected.map((row) => ({ workId, tagId: row.id })));
 }
 
 async function countByTagSlug(slug: string): Promise<number> {
@@ -205,6 +262,7 @@ async function countOtherMovies(): Promise<number> {
       and(
         eq(mediaWork.mediaType, "movie"),
         whereNasPathIsIndexedLibrary(),
+        whereMediaWorkHasDisplayTitle(),
         notExists(
           db
             .select({ w: mediaWorkTag.workId })
@@ -309,6 +367,7 @@ export async function getWorksByCollection(collectionSlug: string): Promise<Medi
         and(
           eq(mediaWork.mediaType, "movie"),
           whereNasPathIsIndexedLibrary(),
+          whereMediaWorkHasDisplayTitle(),
           notExists(
             db
               .select({ w: mediaWorkTag.workId })

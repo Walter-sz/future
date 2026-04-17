@@ -125,12 +125,12 @@ function intAxisLabel(value: number | string): string {
   return String(Math.round(Number(value)));
 }
 
-function weeklyWatchOption(weekly: MediaLibraryDashboardStats["weeklyWatch"]): EChartsOption {
-  const { weeks, currentUnwatchedTotal } = weekly;
-  const shortLabels = weeks.map((w) => w.weekShortLabel);
-  const watchedAdded = weeks.map((w) => w.watchedAddedCount);
+function monthlyWatchOption(monthly: MediaLibraryDashboardStats["monthlyWatch"]): EChartsOption {
+  const { months, currentUnwatchedTotal } = monthly;
+  const shortLabels = months.map((m) => m.monthShortLabel);
+  const watchedAdded = months.map((m) => m.watchedAddedCount);
   const unwatchedInt = Math.round(Number(currentUnwatchedTotal));
-  const lineData = weeks.map(() => unwatchedInt);
+  const lineData = months.map(() => unwatchedInt);
   const y1Max = Math.max(Math.ceil(unwatchedInt * 1.08), 1);
 
   return {
@@ -142,11 +142,11 @@ function weeklyWatchOption(weekly: MediaLibraryDashboardStats["weeklyWatch"]): E
         const list = Array.isArray(params) ? params : [params];
         const first = list[0] as { dataIndex?: number; axisValue?: string };
         const idx = first?.dataIndex ?? 0;
-        const w = weeks[idx];
-        const header = w
-          ? `<div style="font-weight:600;margin-bottom:6px">周始 ${w.weekMondayYmd}（${first?.axisValue ?? ""}）</div>`
+        const m = months[idx];
+        const header = m
+          ? `<div style="font-weight:600;margin-bottom:6px">${m.monthYm}</div>`
           : "";
-        const bar = list.find((p: { seriesName?: string }) => p.seriesName === "当周新增已看") as
+        const bar = list.find((p: { seriesName?: string }) => p.seriesName === "当月已看") as
           | { marker?: string; value?: number }
           | undefined;
         const line = list.find((p: { seriesName?: string }) => p.seriesName === "当前未看总数（参考线）") as
@@ -154,17 +154,17 @@ function weeklyWatchOption(weekly: MediaLibraryDashboardStats["weeklyWatch"]): E
           | undefined;
         const barLine =
           bar != null
-            ? `${bar.marker ?? ""} 当周新增已看：<b>${Math.round(Number(bar.value ?? 0))}</b> 部<br/><span style="color:#94a3b8;font-size:11px">该周内标记为已看的作品数（电影+剧集合计）</span>`
+            ? `${bar.marker ?? ""} 当月已看：<b>${Math.round(Number(bar.value ?? 0))}</b> 部<br/><span style="color:#94a3b8;font-size:11px">该月标记为已看的作品数</span>`
             : "";
         const refLine =
           line != null
-            ? `<br/>${line.marker ?? ""} 当前未看总数（参考线）：<b>${Math.round(Number(line.value ?? unwatchedInt))}</b> 部<br/><span style="color:#94a3b8;font-size:11px">全库当前未看总部数，非「该周未看」；右轴刻度仅用于此参考线</span>`
+            ? `<br/>${line.marker ?? ""} 当前未看总数（参考线）：<b>${Math.round(Number(line.value ?? unwatchedInt))}</b> 部<br/><span style="color:#94a3b8;font-size:11px">全库当前未看总部数，非「该月未看」</span>`
             : "";
         return header + barLine + refLine;
       },
     },
     legend: {
-      data: ["当周新增已看", "当前未看总数（参考线）"],
+      data: ["当月已看", "当前未看总数（参考线）"],
       textStyle: { color: axisText, fontSize: 10 },
       top: 0,
     },
@@ -173,7 +173,7 @@ function weeklyWatchOption(weekly: MediaLibraryDashboardStats["weeklyWatch"]): E
     yAxis: [
       {
         type: "value",
-        name: "当周已看",
+        name: "当月已看",
         min: 0,
         minInterval: 1,
         splitLine: { lineStyle: { color: splitLine } },
@@ -191,7 +191,7 @@ function weeklyWatchOption(weekly: MediaLibraryDashboardStats["weeklyWatch"]): E
     ],
     series: [
       {
-        name: "当周新增已看",
+        name: "当月已看",
         type: "bar",
         data: watchedAdded,
         yAxisIndex: 0,
@@ -214,7 +214,7 @@ const chartShellClass =
   "rounded-xl border border-amber-200/70 bg-gradient-to-b from-amber-50/90 to-white p-3 shadow-sm";
 
 export function MediaLibraryStatsCharts({ stats }: { stats: MediaLibraryDashboardStats }) {
-  const { yearDistribution, movieCollectionDistribution, tvCollectionDistribution, weeklyWatch } = stats;
+  const { yearDistribution, movieCollectionDistribution, tvCollectionDistribution, monthlyWatch } = stats;
 
   return (
     <div className="space-y-6">
@@ -228,7 +228,7 @@ export function MediaLibraryStatsCharts({ stats }: { stats: MediaLibraryDashboar
           />
         </div>
         <div className={chartShellClass} style={{ minHeight: CHART_HEIGHT }}>
-          <ReactECharts option={weeklyWatchOption(weeklyWatch)} style={{ height: CHART_HEIGHT, width: "100%" }} notMerge lazyUpdate />
+          <ReactECharts option={monthlyWatchOption(monthlyWatch)} style={{ height: CHART_HEIGHT, width: "100%" }} notMerge lazyUpdate />
         </div>
       </div>
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">

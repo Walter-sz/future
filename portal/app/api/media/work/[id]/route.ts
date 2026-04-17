@@ -1,7 +1,7 @@
 import { eq } from "drizzle-orm";
 import { getDb } from "@/lib/db";
 import { mediaTag, mediaWork, mediaWorkTag } from "@/lib/db/schema";
-import { getMediaWorkById } from "@/lib/media-data";
+import { getMediaWorkById, replaceMainstreamGenreTagsForWork } from "@/lib/media-data";
 import {
   buildMediaSearchText,
   mergeUserMetaOverridesJson,
@@ -16,6 +16,8 @@ import {
 type PatchBody = {
   watchStatus?: string;
   meta?: UserMetaOverrides;
+  /** 仅电影；slug 须为库内主流类型，整组替换（可空数组表示清空） */
+  genreTagSlugs?: string[];
 };
 
 export async function GET(
@@ -52,9 +54,15 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
   const body = (await request.json().catch(() => ({}))) as PatchBody;
   const hasWatch = body.watchStatus !== undefined;
   const hasMeta = body.meta !== undefined && body.meta !== null && typeof body.meta === "object";
+  const hasGenre =
+    Object.prototype.hasOwnProperty.call(body, "genreTagSlugs") && Array.isArray(body.genreTagSlugs);
 
-  if (!hasWatch && !hasMeta) {
-    return Response.json({ ok: false, error: "需提供 watchStatus 或 meta" }, { status: 400 });
+  if (!hasWatch && !hasMeta && !hasGenre) {
+    return Response.json({ ok: false, error: "需提供 watchStatus、meta 或 genreTagSlugs" }, { status: 400 });
+  }
+
+  if (hasGenre && !body.genreTagSlugs!.every((s) => typeof s === "string")) {
+    return Response.json({ ok: false, error: "genreTagSlugs 须为字符串数组" }, { status: 400 });
   }
 
   if (hasWatch && body.watchStatus !== "watched" && body.watchStatus !== "unwatched") {
@@ -78,6 +86,31 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
   if (!row) return Response.json({ ok: false, error: "not found" }, { status: 404 });
 
   const now = new Date();
+
+  const nextMediaType: "movie" | "tv" =
+    hasMeta && metaPatch.mediaType !== undefined
+      ? metaPatch.mediaType === "tv"
+        ? "tv"
+        : "movie"
+      : row.mediaType === "tv"
+        ? "tv"
+        : "movie";
+
+  if (hasGenre && nextMediaType !== "movie") {
+    return Response.json({ ok: false, error: "仅电影作品可设置类型标签" }, { status: 400 });
+  }
+
+  if (hasGenre) {
+    try {
+      await replaceMainstreamGenreTagsForWork(
+        numeric,
+        (body.genreTagSlugs as string[]).map((s) => s.trim()).filter(Boolean)
+      );
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "类型标签更新失败";
+      return Response.json({ ok: false, error: msg }, { status: 400 });
+    }
+  }
 
   if (hasMeta) {
     const titleZh = metaPatch.titleZh !== undefined ? String(metaPatch.titleZh).trim() : row.titleZh;
@@ -163,6 +196,18 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
         /* 元数据文件写入失败不阻断 DB 更新 */
       }
     }
+  } else if (hasGenre) {
+    const tagsJoined = await tagsJoinedForWork(numeric);
+    const searchText = buildMediaSearchText({
+      titleZh: row.titleZh,
+      titleEn: row.titleEn,
+      summary: row.summary,
+      directorsJson: row.directorsJson,
+      actorsJson: row.actorsJson,
+      tagsJoined,
+      country: row.country,
+    });
+    await db.update(mediaWork).set({ searchText, updatedAt: now }).where(eq(mediaWork.id, numeric));
   }
 
   if (hasWatch) {

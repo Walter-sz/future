@@ -63,6 +63,8 @@ export const mediaWork = sqliteTable(
     tmdbId: integer("tmdb_id"),
     tmdbRating: real("tmdb_rating"),
     doubanRating: real("douban_rating"),
+    /** 豆瓣条目数字 id；推荐去重/外链用，可空 */
+    doubanSubjectId: text("douban_subject_id"),
     matchStatus: text("match_status").notNull().default("unresolved"),
     summary: text("summary"),
     directorsJson: text("directors_json").notNull().default("[]"),
@@ -81,6 +83,7 @@ export const mediaWork = sqliteTable(
   (t) => [
     uniqueIndex("media_work_path_unique").on(t.nasLibraryPath),
     uniqueIndex("media_work_tmdb_unique").on(t.tmdbType, t.tmdbId),
+    uniqueIndex("media_work_douban_subject_unique").on(t.doubanSubjectId),
   ]
 );
 

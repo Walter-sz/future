@@ -34,7 +34,7 @@ export default async function MoviesPage() {
             资源库概览
           </h1>
           <p className="mt-1 text-sm text-slate-600">
-            仅统计资源库索引路径内的作品。周维图「已看」为当周标记为已看的部数；「未看」为当前库内未看总部数参考线，不代表历史每周未看。
+            仅统计资源库索引路径内的作品。月度图「已看」为当月标记为已看的部数；「未看」为当前库内未看总部数参考线，不代表历史每月未看。
           </p>
         </div>
         <MediaLibraryStatsCharts stats={dashboardStats} />

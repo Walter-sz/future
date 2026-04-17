@@ -1,0 +1,5 @@
+# 单次测试：与 app.db 中 nas_library_path 一致
+entries:
+  - search_title: "与狼共舞"
+    kind_hint: movie
+    nas_library_path: "/volume1/homes/影视资源库/与狼共舞"

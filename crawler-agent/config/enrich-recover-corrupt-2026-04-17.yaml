@@ -1,0 +1,76 @@
+# 修复昨晚两批并发 enrich 跨请求串结果导致的 22 行错误数据。
+# 已先行 RESET 这些行的豆瓣字段；本 YAML 用「正确标题」重新单线程抓取。
+# 启动方式：
+#   WALTER_DATA_DIR=../walter_data PYTHONPATH=src python -m crawler_agent.tools.enrich_library_douban \
+#     --config config/enrich-recover-corrupt-2026-04-17.yaml
+#
+# 不开推荐扩散，避免再次牵动占位行。
+
+expand_recommendations: false
+entries:
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/坠落的审判
+  search_title: 坠落的审判
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/爆裂鼓手
+  search_title: 爆裂鼓手
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/冰川时代_Ice Age
+  search_title: 冰川时代
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/健听女孩
+  search_title: 健听女孩
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/傲慢与偏见
+  search_title: 傲慢与偏见
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/紫日
+  search_title: 紫日
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/昨天_Quitting
+  search_title: 昨天
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/The Song of Lunch (2010)_The Song of Lunch
+  search_title: 午宴之歌
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/终结者2
+  search_title: 终结者2：审判日
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/爱尔兰人
+  search_title: 爱尔兰人
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/莫扎特传
+  search_title: 莫扎特传
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/神迹
+  search_title: 神迹
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/寄生虫
+  search_title: 寄生虫
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/回到未来_Back to the Future
+  search_title: 回到未来
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/南极大冒险_Eight Below
+  search_title: 南极大冒险
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/走出非洲_Out of Africa
+  search_title: 走出非洲
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/骗中骗_The Sting
+  search_title: 骗中骗
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/重庆森林
+  search_title: 重庆森林
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/被解救的姜戈
+  search_title: 被解救的姜戈
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/费城故事
+  search_title: 费城故事
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/西部往事
+  search_title: 西部往事
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/放牛班的春天
+  search_title: 放牛班的春天

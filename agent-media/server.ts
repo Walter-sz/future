@@ -93,6 +93,8 @@ type ResolvedMeta = {
   tmdbId: number | null;
   tmdbRating: number | null;
   doubanRating: number | null;
+  /** 豆瓣 subject 数字 id，可选 */
+  doubanSubjectId?: string | null;
   summary: string | null;
   directors: string[];
   actors: string[];
@@ -1033,6 +1035,7 @@ const MEDIA_TAG_SEEDS: { slug: string; name: string }[] = [
   { slug: "horror", name: "恐怖" },
   { slug: "animation", name: "动画" },
   { slug: "war", name: "战争" },
+  { slug: "western", name: "西部" },
   { slug: "romance", name: "爱情" },
   { slug: "documentary", name: "纪录" },
   { slug: "fantasy", name: "奇幻" },
@@ -1051,6 +1054,7 @@ const TAG_SLUG_BY_GENRE_RE: { slug: string; re: RegExp }[] = [
   { slug: "horror", re: /恐怖|horror/i },
   { slug: "animation", re: /动画|animation|anime/i },
   { slug: "war", re: /战争|war|military|二战|一战/i },
+  { slug: "western", re: /西部|western/i },
   { slug: "romance", re: /爱情|romance/i },
   { slug: "documentary", re: /纪录|documentary/i },
   { slug: "fantasy", re: /奇幻|fantasy/i },
@@ -1292,7 +1296,7 @@ function getDb() {
       CREATE TABLE IF NOT EXISTS media_work (
         id INTEGER PRIMARY KEY AUTOINCREMENT,title_zh TEXT NOT NULL,title_en TEXT NOT NULL DEFAULT '',
         normalized_title TEXT NOT NULL DEFAULT '',media_type TEXT NOT NULL DEFAULT 'movie',year INTEGER,country TEXT,language TEXT,
-        tmdb_type TEXT,tmdb_id INTEGER,tmdb_rating REAL,douban_rating REAL,match_status TEXT NOT NULL DEFAULT 'unresolved',summary TEXT,
+        tmdb_type TEXT,tmdb_id INTEGER,tmdb_rating REAL,douban_rating REAL,douban_subject_id TEXT,match_status TEXT NOT NULL DEFAULT 'unresolved',summary TEXT,
         directors_json TEXT NOT NULL DEFAULT '[]',actors_json TEXT NOT NULL DEFAULT '[]',poster_url TEXT,nas_library_path TEXT NOT NULL,
         metadata_path TEXT,user_meta_overrides_json TEXT,search_text TEXT NOT NULL DEFAULT '',watch_status TEXT NOT NULL DEFAULT 'unwatched',watched_at INTEGER,
         created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL
@@ -1312,6 +1316,14 @@ function getDb() {
       if (!names.has("watch_status")) db.exec(`ALTER TABLE media_work ADD COLUMN watch_status TEXT NOT NULL DEFAULT 'unwatched'`);
       if (!names.has("watched_at")) db.exec(`ALTER TABLE media_work ADD COLUMN watched_at INTEGER`);
       if (!names.has("user_meta_overrides_json")) db.exec(`ALTER TABLE media_work ADD COLUMN user_meta_overrides_json TEXT`);
+      if (!names.has("douban_subject_id")) db.exec(`ALTER TABLE media_work ADD COLUMN douban_subject_id TEXT`);
+      try {
+        db.exec(
+          `CREATE UNIQUE INDEX IF NOT EXISTS media_work_douban_subject_unique ON media_work(douban_subject_id)`
+        );
+      } catch {
+        /* 重复非空 id 等 */
+      }
     } catch {
       /* ignore */
     }
@@ -1393,11 +1405,15 @@ function upsertIndex(meta: ResolvedMeta, metadataPath: string, nasPath: string) 
   const now = Date.now();
   const preservedUserMeta = readUserMetaOverridesJsonForNas(raw, nasPath);
   const searchText = [meta.titleZh, meta.titleEn, meta.summary || "", meta.directors.join(" "), meta.actors.join(" "), meta.tags.join(" "), meta.country || ""].join(" ").trim();
-  raw.prepare(`INSERT INTO media_work(title_zh,title_en,normalized_title,media_type,year,country,language,tmdb_type,tmdb_id,tmdb_rating,douban_rating,match_status,summary,directors_json,actors_json,poster_url,nas_library_path,metadata_path,user_meta_overrides_json,search_text,watch_status,watched_at,created_at,updated_at)
-    VALUES(@titleZh,@titleEn,@normalizedTitle,@mediaType,@year,@country,@language,@tmdbType,@tmdbId,@tmdbRating,@doubanRating,@matchStatus,@summary,@directorsJson,@actorsJson,@posterUrl,@nasLibraryPath,@metadataPath,@preservedUserMeta,@searchText,'unwatched',NULL,@now,@now)
+  const doubanSid =
+    meta.doubanSubjectId != null && String(meta.doubanSubjectId).trim() !== ""
+      ? String(meta.doubanSubjectId).trim()
+      : null;
+  raw.prepare(`INSERT INTO media_work(title_zh,title_en,normalized_title,media_type,year,country,language,tmdb_type,tmdb_id,tmdb_rating,douban_rating,douban_subject_id,match_status,summary,directors_json,actors_json,poster_url,nas_library_path,metadata_path,user_meta_overrides_json,search_text,watch_status,watched_at,created_at,updated_at)
+    VALUES(@titleZh,@titleEn,@normalizedTitle,@mediaType,@year,@country,@language,@tmdbType,@tmdbId,@tmdbRating,@doubanRating,@doubanSubjectId,@matchStatus,@summary,@directorsJson,@actorsJson,@posterUrl,@nasLibraryPath,@metadataPath,@preservedUserMeta,@searchText,'unwatched',NULL,@now,@now)
     ON CONFLICT(nas_library_path) DO UPDATE SET
       title_zh=excluded.title_zh,title_en=excluded.title_en,normalized_title=excluded.normalized_title,media_type=excluded.media_type,year=excluded.year,country=excluded.country,language=excluded.language,
-      tmdb_type=excluded.tmdb_type,tmdb_id=excluded.tmdb_id,tmdb_rating=excluded.tmdb_rating,douban_rating=excluded.douban_rating,match_status=excluded.match_status,summary=excluded.summary,
+      tmdb_type=excluded.tmdb_type,tmdb_id=excluded.tmdb_id,tmdb_rating=excluded.tmdb_rating,douban_rating=excluded.douban_rating,douban_subject_id=COALESCE(excluded.douban_subject_id, douban_subject_id),match_status=excluded.match_status,summary=excluded.summary,
       directors_json=excluded.directors_json,actors_json=excluded.actors_json,poster_url=excluded.poster_url,metadata_path=excluded.metadata_path,user_meta_overrides_json=excluded.user_meta_overrides_json,search_text=excluded.search_text,updated_at=excluded.updated_at`).run({
     titleZh: meta.titleZh,
     titleEn: meta.titleEn || "",
@@ -1410,6 +1426,7 @@ function upsertIndex(meta: ResolvedMeta, metadataPath: string, nasPath: string) 
     tmdbId: meta.tmdbId,
     tmdbRating: meta.tmdbRating,
     doubanRating: meta.doubanRating,
+    doubanSubjectId: doubanSid,
     matchStatus: meta.matchStatus,
     summary: meta.summary,
     directorsJson: JSON.stringify(meta.directors),

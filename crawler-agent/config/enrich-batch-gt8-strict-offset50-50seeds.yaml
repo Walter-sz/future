@@ -1,0 +1,162 @@
+# 第二批：资源库电影 douban_rating > 8（严格），按分降序跳过前 50 条后再取 50 条种子。
+# 一跳扩散：expand_recommendations 为 true（每种子详情页推荐区至多再拉 10 部详情写占位）。
+# 命令行等价：
+#   WALTER_DATA_DIR=../walter_data PYTHONPATH=src python -m crawler_agent.tools.enrich_library_douban \
+#     --all-library --min-douban-rating 8 --min-douban-rating-strict --movie-only --limit 50 --offset 50 --expand-recommendations
+# 关扩散：--no-expand-recommendations
+
+entries:
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/莫扎特传
+  search_title: 莫扎特传
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/神迹
+  search_title: 神迹
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/南极大冒险_Eight Below
+  search_title: 南极大冒险
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/走出非洲_Out of Africa
+  search_title: 走出非洲
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/骗中骗_The Sting
+  search_title: 骗中骗
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/费城故事
+  search_title: 费城故事
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/西部往事
+  search_title: 西部往事
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/爆裂鼓手
+  search_title: 爆裂鼓手
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/教宗的承继
+  search_title: 教宗的承继
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/健听女孩
+  search_title: 健听女孩
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/紫日
+  search_title: 紫日
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/The Song of Lunch (2010)_The Song of Lunch
+  search_title: 午宴之歌
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/回到未来3_Back to the Future Part III
+  search_title: 回到未来3
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/无主之作
+  search_title: 无主之作
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/芝加哥七君子审判
+  search_title: 芝加哥七君子审判
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/内布拉斯加
+  search_title: 内布拉斯加
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/相约星期二
+  search_title: 相约星期二
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/星球大战 1-11部
+  search_title: 星球大战
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/蓝白红-三部曲
+  search_title: 蓝白红三部曲之蓝
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/K星异客
+  search_title: K星异客
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/少年斯派维的奇异旅行_The Young and Prodigious T.S.
+    Spivet
+  search_title: 少年斯派维的奇异旅行
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/回到未来2_Back to the Future Part II
+  search_title: 回到未来2
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/火星救援
+  search_title: 火星救援
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/王牌对王牌
+  search_title: 王牌对王牌
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/一级恐惧
+  search_title: 一级恐惧
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/英国病人
+  search_title: 英国病人
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/灵魂歌王
+  search_title: 灵魂歌王
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/落水狗
+  search_title: 落水狗
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/Water 2005_Water
+  search_title: 水
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/超时空接触_Contact
+  search_title: 超时空接触
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/黑洞频率
+  search_title: 黑洞频率
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/国家地理 心事谁人知 生命之泵 六四_National Geographic The
+    Secret Heart Pumped
+  search_title: 国家地理 :心事谁人知
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/国家地理：心事谁人知 心脏病_National Geographic The Secret
+    Heart Stressed Out
+  search_title: 国家地理 :心事谁人知
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/黑皮书_Black Book
+  search_title: 黑皮书
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/第一滴血1-5
+  search_title: 第一滴血
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/真实的谎言
+  search_title: 真实的谎言
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/最后的决斗
+  search_title: 最后的决斗
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/地狱尖兵
+  search_title: 地狱尖兵 Лучшие в аду
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/8英里
+  search_title: 8英里
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/Too Big To Fail 2011_Too Big To Fail
+  search_title: 大而不倒
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/每分钟120击_120 battements par minute
+  search_title: 每分钟120击
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/曾经_Once
+  search_title: 曾经
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/卡桑德拉大桥
+  search_title: 卡桑德拉大桥
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/猎鹿人_The Deer Hunter
+  search_title: 猎鹿人
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/艺术家_The Artist
+  search_title: 艺术家
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/午后之爱_Lamour laprèsmidi
+  search_title: 午后之爱
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/银翼杀手
+  search_title: 银翼杀手2049
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/终结者系列
+  search_title: 终结者
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/她比烟花寂寞
+  search_title: 她比烟花寂寞
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/边缘日记
+  search_title: 边缘日记
+expand_recommendations: true

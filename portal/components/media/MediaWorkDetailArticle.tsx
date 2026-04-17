@@ -13,6 +13,8 @@ type Props = {
   directors: string[];
   actors: string[];
   tagNames: string[];
+  /** 电影主流类型选项（slug + 展示名，来自 media_tag / 合集定义） */
+  genreOptions: { slug: string; label: string }[];
 };
 
 function score(v: number | null) {
@@ -30,7 +32,11 @@ function isLocked(overrides: UserMetaOverrides | undefined, key: UserMetaOverrid
   return overrides != null && Object.prototype.hasOwnProperty.call(overrides, key);
 }
 
-export function MediaWorkDetailArticle({ workId, item, directors, actors, tagNames }: Props) {
+function sortedSlugKey(slugs: string[]) {
+  return [...slugs].sort().join("\0");
+}
+
+export function MediaWorkDetailArticle({ workId, item, directors, actors, tagNames, genreOptions }: Props) {
   const router = useRouter();
   const [editing, setEditing] = useState(false);
   const [titleZh, setTitleZh] = useState(item.titleZh);
@@ -44,6 +50,7 @@ export function MediaWorkDetailArticle({ workId, item, directors, actors, tagNam
   const [pending, setPending] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [okMsg, setOkMsg] = useState<string | null>(null);
+  const [selectedGenreSlugs, setSelectedGenreSlugs] = useState<string[]>(() => [...item.genreTagSlugs]);
 
   const snapshot = useMemo(
     () => ({
@@ -70,6 +77,7 @@ export function MediaWorkDetailArticle({ workId, item, directors, actors, tagNam
     setCountry(item.country ?? "");
     setSummary(item.summary ?? "");
     setMediaKind(item.mediaType === "tv" ? "tv" : "movie");
+    setSelectedGenreSlugs([...item.genreTagSlugs]);
   }, [
     item.titleZh,
     item.titleEn,
@@ -79,6 +87,7 @@ export function MediaWorkDetailArticle({ workId, item, directors, actors, tagNam
     item.tmdbRating,
     item.country,
     item.summary,
+    item.genreTagSlugs,
   ]);
 
   useEffect(() => {
@@ -107,16 +116,22 @@ export function MediaWorkDetailArticle({ workId, item, directors, actors, tagNam
     setErr(null);
     setOkMsg(null);
     const patch = buildPatch();
-    if (!patch) {
+    const genreApplies = mediaKind === "movie";
+    const genreChanged =
+      genreApplies && sortedSlugKey(selectedGenreSlugs) !== sortedSlugKey(item.genreTagSlugs);
+    if (!patch && !genreChanged) {
       setErr("没有修改项");
       return;
     }
     setPending(true);
     try {
+      const body: Record<string, unknown> = {};
+      if (patch) body.meta = patch;
+      if (genreChanged) body.genreTagSlugs = [...selectedGenreSlugs];
       const r = await fetch(`/api/media/work/${workId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ meta: patch }),
+        body: JSON.stringify(body),
       });
       const data = (await r.json()) as { ok?: boolean; error?: string };
       if (!r.ok || !data.ok) throw new Error(data.error || "保存失败");
@@ -330,11 +345,49 @@ export function MediaWorkDetailArticle({ workId, item, directors, actors, tagNam
             <span className={fieldLabelClass}>主要演员：</span>
             {actors.length > 0 ? actors.join("、") : "暂无"}
           </p>
-          {tagNames.length > 0 ? (
+          {item.mediaType === "movie" || tagNames.length > 0 ? (
             <p>
               <span className={fieldLabelClass}>类型标签：</span>
-              {tagNames.join("、")}
+              {editing && mediaKind === "movie"
+                ? selectedGenreSlugs.length === 0
+                  ? "未选择"
+                  : selectedGenreSlugs
+                      .map((s) => genreOptions.find((g) => g.slug === s)?.label ?? s)
+                      .join("、")
+                : tagNames.length > 0
+                  ? tagNames.join("、")
+                  : item.mediaType === "movie"
+                    ? "暂无（未归入主流类型合集）"
+                    : "—"}
             </p>
+          ) : null}
+          {editing && mediaKind === "movie" && genreOptions.length > 0 ? (
+            <div className="rounded-md border border-slate-100 bg-slate-50/80 p-3">
+              <p className={fieldLabelClass}>调整类型（多选）</p>
+              <p className="mt-0.5 text-xs text-slate-500">从已有类型中选择，保存后与影视资源页各类型合集一致。</p>
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {genreOptions.map((g) => {
+                  const on = selectedGenreSlugs.includes(g.slug);
+                  return (
+                    <button
+                      key={g.slug}
+                      type="button"
+                      disabled={pending}
+                      onClick={() => {
+                        setSelectedGenreSlugs((prev) =>
+                          on ? prev.filter((s) => s !== g.slug) : [...prev, g.slug]
+                        );
+                      }}
+                      className={`rounded-md border px-2 py-1 text-xs font-medium transition-colors ${
+                        on ? "border-amber-500 bg-amber-50 text-amber-950" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                      }`}
+                    >
+                      {g.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
           ) : null}
           <p>
             <span className={fieldLabelClass}>元数据来源：</span>

@@ -1,0 +1,53 @@
+# 第三批：资源库电影 douban_rating >= 8，按分降序跳过前 100 条后再取 30 条种子（避开前两批已处理范围）。
+# 一跳扩散：expand_recommendations 为 true（每种子详情页推荐区至多再拉 10 部详情写占位）。
+# 命令行等价：
+#   WALTER_DATA_DIR=../walter_data PYTHONPATH=src python -m crawler_agent.tools.enrich_library_douban \
+#     --all-library --min-douban-rating 8 --movie-only --limit 30 --offset 100 --expand-recommendations
+
+expand_recommendations: true
+entries:
+- search_title: 风雨哈佛路
+  nas_library_path: /volume1/homes/影视资源库/风雨哈佛路
+  kind_hint: movie
+- search_title: 无依之地
+  nas_library_path: /volume1/homes/影视资源库/无依之地
+  kind_hint: movie
+- search_title: 珍珠港
+  nas_library_path: /volume1/homes/影视资源库/珍珠港
+  kind_hint: movie
+- search_title: 勇者无惧
+  nas_library_path: /volume1/homes/影视资源库/断锁怒潮
+  kind_hint: movie
+- search_title: 波斯语课
+  nas_library_path: /volume1/homes/影视资源库/波斯语课
+  kind_hint: movie
+- search_title: 万湖会议
+  nas_library_path: /volume1/homes/影视资源库/万湖会议
+  kind_hint: movie
+- search_title: 华尔街之狼
+  nas_library_path: /volume1/homes/影视资源库/华尔街之狼
+  kind_hint: movie
+- search_title: 训练日
+  nas_library_path: /volume1/homes/影视资源库/训练日_Training Day
+  kind_hint: movie
+- search_title: 倒数时刻
+  nas_library_path: /volume1/homes/影视资源库/倒数时刻
+  kind_hint: movie
+- search_title: 巴比伦
+  nas_library_path: /volume1/homes/影视资源库/巴比伦
+  kind_hint: movie
+- search_title: 了不起的盖茨比
+  nas_library_path: /volume1/homes/影视资源库/了不起的盖茨比
+  kind_hint: movie
+- search_title: 风月俏佳人 風月俏佳人
+  nas_library_path: /volume1/homes/影视资源库/风月俏佳人
+  kind_hint: movie
+- search_title: 鸟人
+  nas_library_path: /volume1/homes/影视资源库/鸟人_Birdman
+  kind_hint: movie
+- search_title: 诺丁山
+  nas_library_path: /volume1/homes/影视资源库/诺丁山_Notting Hill
+  kind_hint: movie
+- search_title: 毕业生
+  nas_library_path: /volume1/homes/影视资源库/毕业生
+  kind_hint: movie

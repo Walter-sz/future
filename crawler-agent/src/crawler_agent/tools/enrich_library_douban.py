@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import fcntl
 import json
 import os
 import re
@@ -61,6 +62,105 @@ def slugify(title: str) -> str:
     return s or "unknown"
 
 
+_LOCK_FILE_NAME = ".enrich.lock"
+
+
+def acquire_enrich_lock(*, allow_concurrent: bool = False):
+    """进程级独占锁，防止两个 enrich 同时打豆瓣后端导致结果跨请求串位（昨晚事故根因之一）。"""
+    if allow_concurrent:
+        print("[lock] --allow-concurrent 已开启，不获取互斥锁（请确认你确实需要并发）", flush=True)
+        return None
+    lock_dir = walter_data_dir()
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    lock_path = lock_dir / _LOCK_FILE_NAME
+    f = open(lock_path, "w", encoding="utf-8")
+    try:
+        fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        f.close()
+        print(
+            f"[lock] 检测到 {lock_path} 已被另一个 enrich 持有；并发跑会导致豆瓣后端串结果。\n"
+            f"  请等待该任务结束，或显式加 --allow-concurrent 强行跑（不推荐）。",
+            flush=True,
+        )
+        sys.exit(2)
+    f.write(f"pid={os.getpid()}\nstarted_at={int(time.time())}\n")
+    f.flush()
+    return f
+
+
+def _normalize_for_compare(s: str | None) -> str:
+    if not s:
+        return ""
+    return re.sub(r"[^\w\u4e00-\u9fff]+", "", s.strip().lower(), flags=re.UNICODE)
+
+
+def _has_token_overlap(a: str | None, b: str | None, min_len: int = 2) -> bool:
+    """两个标题归一化后是否存在长度 >= min_len 的连续子串重叠。"""
+    na = _normalize_for_compare(a)
+    nb = _normalize_for_compare(b)
+    if not na or not nb:
+        return False
+    short, long_ = (na, nb) if len(na) <= len(nb) else (nb, na)
+    if short in long_:
+        return True
+    if len(short) < min_len:
+        return False
+    for i in range(len(short) - min_len + 1):
+        if short[i : i + min_len] in long_:
+            return True
+    return False
+
+
+def _expected_title_candidates(
+    *,
+    search_title: str | None,
+    existing_title_zh: str | None,
+    nas_library_path: str | None,
+) -> list[str]:
+    out: list[str] = []
+    for v in (search_title, existing_title_zh):
+        if v and v.strip():
+            out.append(v.strip())
+    if nas_library_path and not nas_library_path.startswith("meta:douban:"):
+        base = nas_library_path.rstrip("/").rsplit("/", 1)[-1].strip()
+        if base:
+            out.append(base)
+            for piece in base.split("_"):
+                p = piece.strip()
+                if p:
+                    out.append(p)
+    return out
+
+
+def verify_resolved_title(
+    *,
+    returned_title_zh: str | None,
+    returned_title_en: str | None,
+    search_title: str | None,
+    existing_title_zh: str | None = None,
+    nas_library_path: str | None = None,
+) -> tuple[bool, str]:
+    """返回 (ok, 原因)。任一候选标题与豆瓣返回的中/英文名有 >=2 字符重叠即视为通过；都不沾边则拒绝。"""
+    candidates = _expected_title_candidates(
+        search_title=search_title,
+        existing_title_zh=existing_title_zh,
+        nas_library_path=nas_library_path,
+    )
+    returned_main = (returned_title_zh or "").strip() or (returned_title_en or "").strip()
+    if not returned_main:
+        return False, "豆瓣返回的标题为空"
+    if not candidates:
+        return True, "无对照标题可用，跳过校验"
+    for cand in candidates:
+        if _has_token_overlap(cand, returned_title_zh) or _has_token_overlap(cand, returned_title_en):
+            return True, "ok"
+    return False, (
+        f"返回标题与请求/现有/路径标题完全无 2 字符重叠 "
+        f"returned={returned_main!r} candidates={candidates!r}"
+    )
+
+
 def split_canonical_title(canonical: str | None) -> tuple[str, str]:
     s = (canonical or "").strip()
     if not s:
@@ -71,6 +171,18 @@ def split_canonical_title(canonical: str | None) -> tuple[str, str]:
         if zh and en:
             return zh, en
     return s, ""
+
+
+def _douban_seen_day_to_utc_noon_sec(day: str | None) -> int | None:
+    """豆瓣常见仅有日期；用 UTC 正午落库（秒级），避免时区边界显示成前一天。"""
+    if not day or not isinstance(day, str):
+        return None
+    m = re.match(r"^(\d{4})-(\d{2})-(\d{2})$", day.strip())
+    if not m:
+        return None
+    y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
+    dt = datetime(y, mo, d, 12, 0, 0, tzinfo=timezone.utc)
+    return int(dt.timestamp())
 
 
 def _year_int(year_raw: Any) -> int | None:
@@ -117,7 +229,13 @@ def _strip_tv_season_en(en: str, *, is_tv: bool) -> str:
     return re.sub(r"\s+Season\s*\d+\s*$", "", en.strip(), flags=re.IGNORECASE).strip()
 
 
-def subject_data_to_update(sd: dict[str, Any], *, kind_hint: str, cover_cache_dir: Path) -> dict[str, Any]:
+def subject_data_to_update(
+    sd: dict[str, Any],
+    *,
+    kind_hint: str,
+    cover_cache_dir: Path,
+    sync_douban_watch: bool = True,
+) -> dict[str, Any]:
     is_tv = _media_type(kind_hint) == "tv"
     zh, en = split_canonical_title(sd.get("canonicalTitle"))
     if not zh and sd.get("canonicalTitle"):
@@ -134,7 +252,14 @@ def subject_data_to_update(sd: dict[str, Any], *, kind_hint: str, cover_cache_di
     search_bits.append(" ".join(str(x) for x in countries))
     search_text = " ".join(x for x in search_bits if x).strip()
 
-    return {
+    douban_subject_id: str | None = None
+    did_raw = sd.get("doubanId")
+    if did_raw is not None:
+        sid = str(did_raw).strip()
+        if sid.isdigit() and len(sid) >= 5:
+            douban_subject_id = sid
+
+    out: dict[str, Any] = {
         "title_zh": zh or "",
         "title_en": en or "",
         "normalized_title": normalized,
@@ -149,7 +274,15 @@ def subject_data_to_update(sd: dict[str, Any], *, kind_hint: str, cover_cache_di
         "poster_url": _poster_url(sd, cover_cache_dir),
         "match_status": "matched",
         "search_text": search_text,
+        "douban_subject_id": douban_subject_id,
     }
+    if sync_douban_watch and sd.get("doubanUserSeen") is True:
+        out["watch_status"] = "watched"
+        seen_day = sd.get("doubanSeenAt") if isinstance(sd.get("doubanSeenAt"), str) else None
+        sec = _douban_seen_day_to_utc_noon_sec(seen_day)
+        if sec is not None:
+            out["watched_at_sec"] = sec
+    return out
 
 
 def _nas_library_root() -> str:
@@ -208,11 +341,91 @@ def load_all_library_entries(
     return out
 
 
-def load_config(path: Path) -> list[dict[str, Any]]:
+def load_movie_library_entries_by_min_douban_rating(
+    db_path: Path,
+    *,
+    min_rating: float,
+    nas_root: str | None = None,
+    limit: int | None = None,
+    offset: int = 0,
+    strict_greater_than: bool = False,
+    seed_source: str = "nas",
+) -> list[dict[str, Any]]:
+    """已有豆瓣评分的电影，按评分降序（再按 id）选批次种子。
+
+    比较符：默认 ``>= min_rating``；``strict_greater_than=True`` 时为严格 ``> min_rating``。
+    seed_source：
+      - ``"nas"``（默认）：只挑 NAS 资源库下的真实条目（与 Portal 列表一致）。
+      - ``"placeholder"``：只挑 ``meta:douban:`` 占位条目（来自一跳扩散写入的、库里没有实体资源的电影）。
+      - ``"all"``：上述两者并集。
+    """
+    if seed_source not in ("nas", "placeholder", "all"):
+        raise ValueError("seed_source 须为 nas|placeholder|all")
+    root = (nas_root or _nas_library_root()).strip().rstrip("/") or "/"
+    nas_like = f"{root}/%"
+    cmp_sql = ">" if strict_greater_than else ">="
+
+    if seed_source == "nas":
+        path_clause = "(nas_library_path = ? OR nas_library_path LIKE ?)"
+        path_params: list[Any] = [root, nas_like]
+    elif seed_source == "placeholder":
+        path_clause = "nas_library_path LIKE 'meta:douban:%'"
+        path_params = []
+    else:
+        path_clause = "(nas_library_path = ? OR nas_library_path LIKE ? OR nas_library_path LIKE 'meta:douban:%')"
+        path_params = [root, nas_like]
+
+    conn = sqlite3.connect(str(db_path))
+    try:
+        lim_sql = ""
+        params: list[Any] = [*path_params, min_rating]
+        if limit is not None and limit > 0:
+            lim_sql = " LIMIT ? OFFSET ? "
+            params.extend([limit, offset])
+        elif offset > 0:
+            lim_sql = " LIMIT -1 OFFSET ? "
+            params.append(offset)
+        sql = f"""
+          SELECT
+            COALESCE(NULLIF(TRIM(title_zh), ''), NULLIF(TRIM(normalized_title), ''), nas_library_path) AS q,
+            nas_library_path
+          FROM media_work
+          WHERE COALESCE(nas_library_path, '') NOT LIKE '%影视资源待入库%'
+            AND {path_clause}
+            AND LOWER(COALESCE(media_type, 'movie')) = 'movie'
+            AND douban_rating IS NOT NULL
+            AND douban_rating {cmp_sql} ?
+          ORDER BY douban_rating DESC, id ASC
+          {lim_sql}
+        """
+        cur = conn.execute(sql, tuple(params))
+        rows = cur.fetchall()
+    finally:
+        conn.close()
+
+    out: list[dict[str, Any]] = []
+    for q, nas in rows:
+        st = (q or "").strip()
+        if not st:
+            continue
+        out.append({"search_title": st, "nas_library_path": str(nas).strip(), "kind_hint": "movie"})
+    return out
+
+
+def load_config(path: Path) -> tuple[list[dict[str, Any]], bool | None]:
+    """返回 (entries, expand_recommendations_or_none)。根级 ``expand_recommendations: true/false`` 可选。"""
     text = path.read_text(encoding="utf-8")
     data = yaml.safe_load(text)
     if not isinstance(data, dict) or "entries" not in data:
         raise ValueError("配置文件须为 { entries: [ ... ] } 结构")
+    raw_expand = data.get("expand_recommendations")
+    expand_flag: bool | None
+    if raw_expand is None:
+        expand_flag = None
+    elif isinstance(raw_expand, bool):
+        expand_flag = raw_expand
+    else:
+        raise ValueError("expand_recommendations 须为布尔值（可选）")
     entries = data["entries"]
     if not isinstance(entries, list) or not entries:
         raise ValueError("entries 须为非空数组")
@@ -230,7 +443,7 @@ def load_config(path: Path) -> list[dict[str, Any]]:
         if kh not in ("auto", "movie", "tv"):
             raise ValueError(f"entries[{i}].kind_hint 须为 auto|movie|tv")
         out.append({"search_title": st.strip(), "nas_library_path": nas.strip(), "kind_hint": kh})
-    return out
+    return out, expand_flag
 
 
 def load_previous_metadata_json(metadata_path: str | None) -> dict[str, Any]:
@@ -283,6 +496,15 @@ def build_merged_metadata(
     merged["targetPath"] = nas_library_path
     merged["doubanEnrich"] = {"source": "crawler-agent enrich_library_douban", "subjectData": sd}
     merged["generatedAt"] = datetime.now(timezone.utc).isoformat()
+    if sd.get("doubanUserSeen") is not None:
+        merged["doubanUserSeen"] = sd.get("doubanUserSeen")
+    if sd.get("doubanSeenAt"):
+        merged["doubanSeenAt"] = sd.get("doubanSeenAt")
+    if sd.get("doubanUserCollectStatus"):
+        merged["doubanUserCollectStatus"] = sd.get("doubanUserCollectStatus")
+    rs = sd.get("recommendSameSubjects")
+    if isinstance(rs, list) and rs:
+        merged["doubanRecommendSameSubjects"] = rs[:10]
     return merged
 
 
@@ -400,6 +622,241 @@ def run_fix_tv_display_titles_in_db() -> int:
     return 0
 
 
+_DOUBAN_PLACEHOLDER_PREFIX = "meta:douban:"
+
+_GENRE_SLUG_MAP: list[tuple[str, re.Pattern[str]]] = [
+    ("action", re.compile(r"动作|action", re.I)),
+    ("comedy", re.compile(r"喜剧|comedy", re.I)),
+    ("drama", re.compile(r"剧情|drama", re.I)),
+    ("sci-fi", re.compile(r"科幻|science\s*fiction|sci[-\s]?fi", re.I)),
+    ("thriller", re.compile(r"惊悚|悬疑|thriller|suspense", re.I)),
+    ("horror", re.compile(r"恐怖|horror", re.I)),
+    ("animation", re.compile(r"动画|animation|anime", re.I)),
+    ("war", re.compile(r"战争|war|military|二战|一战", re.I)),
+    ("romance", re.compile(r"爱情|romance", re.I)),
+    ("documentary", re.compile(r"纪录|documentary", re.I)),
+    ("fantasy", re.compile(r"奇幻|fantasy", re.I)),
+    ("crime", re.compile(r"犯罪|crime", re.I)),
+    ("family", re.compile(r"家庭|family", re.I)),
+    ("history", re.compile(r"历史|history", re.I)),
+    ("mystery", re.compile(r"推理|mystery", re.I)),
+    ("adventure", re.compile(r"冒险|adventure", re.I)),
+    ("western", re.compile(r"西部|western", re.I)),
+    ("music", re.compile(r"音乐|musical|music", re.I)),
+    ("biography", re.compile(r"传记|biography|biopic", re.I)),
+]
+
+
+def _genres_to_slugs(genres: list[str]) -> list[str]:
+    out: set[str] = set()
+    for g in genres:
+        t = (g or "").strip()
+        if not t:
+            continue
+        for slug, pat in _GENRE_SLUG_MAP:
+            if pat.search(t):
+                out.add(slug)
+    return sorted(out)
+
+
+_EXTRA_TAG_SEEDS: list[tuple[str, str]] = [
+    ("adventure", "冒险"),
+    ("western", "西部"),
+    ("music", "音乐"),
+    ("biography", "传记"),
+]
+
+
+def _ensure_extra_tag_seeds(conn: sqlite3.Connection) -> None:
+    for slug, name in _EXTRA_TAG_SEEDS:
+        conn.execute("INSERT OR IGNORE INTO media_tag(slug, name) VALUES (?, ?)", (slug, name))
+
+
+def _sync_work_tags(conn: sqlite3.Connection, work_id: int, slugs: list[str]) -> None:
+    if not slugs:
+        return
+    _ensure_extra_tag_seeds(conn)
+    for slug in slugs:
+        row = conn.execute("SELECT id FROM media_tag WHERE slug = ?", (slug,)).fetchone()
+        if row:
+            conn.execute(
+                "INSERT OR IGNORE INTO media_work_tag(work_id, tag_id) VALUES(?, ?)",
+                (work_id, row[0]),
+            )
+
+
+def _douban_placeholder_nas_path(subject_id: str) -> str:
+    return f"{_DOUBAN_PLACEHOLDER_PREFIX}{subject_id.strip()}"
+
+
+def _existing_douban_subject_ids(conn: sqlite3.Connection, sids: list[str]) -> set[str]:
+    if not sids:
+        return set()
+    placeholders = ",".join("?" for _ in sids)
+    rows = conn.execute(
+        f"SELECT douban_subject_id FROM media_work WHERE douban_subject_id IN ({placeholders})",
+        tuple(sids),
+    ).fetchall()
+    return {str(r[0]) for r in rows}
+
+
+async def _expand_one_recommendation(
+    bm: BrowserManager | None,
+    *,
+    use_http: bool,
+    crawler_agent_base: str | None,
+    crawler_api_key: str | None,
+    rec: dict[str, str],
+    cover_cache_dir: Path,
+    public_base_url: str | None,
+    timeout_ms: int,
+    force_headed: bool,
+    dry_run: bool,
+    sync_douban_watch: bool,
+) -> None:
+    """抓取一条推荐条目的完整详情并 INSERT 占位行 + metadata JSON。"""
+    sid = str(rec.get("subjectId", "")).strip()
+    rec_title = str(rec.get("title", "")).strip()
+    if not sid.isdigit() or len(sid) < 5 or not rec_title:
+        return
+
+    dbp = app_db_path()
+    if not dbp.is_file():
+        return
+
+    timeout_s = min(900.0, max(15.0, timeout_ms / 1000.0 + 20.0))
+
+    if use_http and crawler_agent_base:
+        data, urls, err = await asyncio.to_thread(
+            run_douban_resolve_http_sync,
+            crawler_agent_base,
+            title=rec_title,
+            kind_hint="movie",
+            api_key=crawler_api_key,
+            timeout_s=timeout_s,
+        )
+    elif bm is not None:
+        data, urls, err = await run_douban_resolve_by_title(
+            bm,
+            title=rec_title,
+            kind_hint="movie",
+            force_headed=force_headed,
+            timeout_ms=timeout_ms,
+            cover_cache_dir=cover_cache_dir,
+            public_base_url=public_base_url,
+        )
+    else:
+        print(f"  [rec-skip] 无浏览器: {rec_title!r}", flush=True)
+        return
+
+    if err or not data:
+        print(f"  [rec-fail] {rec_title!r} sid={sid}: {err}", flush=True)
+        return
+
+    if use_http and not dry_run:
+        ensure_cover_downloaded_local(data, cover_cache_dir)
+
+    patch = subject_data_to_update(
+        data, kind_hint="movie", cover_cache_dir=cover_cache_dir, sync_douban_watch=sync_douban_watch,
+    )
+
+    ok, reason = verify_resolved_title(
+        returned_title_zh=patch.get("title_zh"),
+        returned_title_en=patch.get("title_en"),
+        search_title=rec_title,
+    )
+    returned_sid = str(patch.get("douban_subject_id") or "").strip()
+    if not ok or (returned_sid and returned_sid != sid):
+        why = reason if not ok else f"返回 sid={returned_sid} 与请求 sid={sid} 不一致"
+        print(f"  [rec-guard] 拒绝写入：{rec_title!r} sid={sid} {why}", flush=True)
+        return
+
+    placeholder_nas = _douban_placeholder_nas_path(patch.get("douban_subject_id") or sid)
+    merged = build_merged_metadata({}, data, nas_library_path=placeholder_nas, patch=patch)
+
+    meta_dir = metadata_dir()
+    fname = f"{slugify(patch['title_zh'] or rec_title)}-{int(time.time() * 1000)}.json"
+    new_meta_path = (meta_dir / fname).resolve()
+    now_ms = int(time.time() * 1000)
+
+    if dry_run:
+        ws = ""
+        if patch.get("watch_status") == "watched":
+            at = patch.get("watched_at_sec")
+            if at is not None:
+                from datetime import datetime as _dt, timezone as _tz
+                ds = _dt.fromtimestamp(at, tz=_tz.utc).strftime("%Y-%m-%d")
+                ws = f" watch=watched({ds})"
+            else:
+                ws = " watch=watched"
+        print(
+            f"  [rec-dry] {rec_title!r} sid={sid} rating={patch.get('douban_rating')}{ws}",
+            flush=True,
+        )
+        return
+
+    new_meta_path.write_text(json.dumps(merged, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    conn = sqlite3.connect(str(dbp))
+    try:
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO media_work (
+              title_zh, title_en, normalized_title, media_type, year,
+              country, language, douban_rating, summary,
+              directors_json, actors_json, poster_url,
+              match_status, search_text, douban_subject_id,
+              watch_status, watched_at,
+              nas_library_path, metadata_path,
+              created_at, updated_at
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                patch["title_zh"],
+                patch["title_en"],
+                patch["normalized_title"],
+                patch["media_type"],
+                patch["year"],
+                patch["country"],
+                patch["language"],
+                patch["douban_rating"],
+                patch["summary"],
+                patch["directors_json"],
+                patch["actors_json"],
+                patch["poster_url"],
+                patch["match_status"],
+                patch["search_text"],
+                patch["douban_subject_id"],
+                patch.get("watch_status") or "unwatched",
+                patch.get("watched_at_sec"),
+                placeholder_nas,
+                str(new_meta_path),
+                now_ms,
+                now_ms,
+            ),
+        )
+        conn.commit()
+
+        genres = data.get("genres") if isinstance(data.get("genres"), list) else []
+        tag_slugs = _genres_to_slugs(genres)
+        if tag_slugs:
+            row_id = conn.execute(
+                "SELECT id FROM media_work WHERE douban_subject_id = ?",
+                (patch["douban_subject_id"],),
+            ).fetchone()
+            if row_id:
+                _sync_work_tags(conn, row_id[0], tag_slugs)
+                conn.commit()
+    finally:
+        conn.close()
+
+    ws = ""
+    if patch.get("watch_status") == "watched":
+        extra = f" watched_at_sec={patch['watched_at_sec']}" if patch.get("watched_at_sec") is not None else ""
+        ws = f" 观影=已看{extra}"
+    print(f"  [rec-ok] {rec_title!r} sid={sid}{ws}", flush=True)
+
+
 async def process_one(
     bm: BrowserManager | None,
     *,
@@ -414,6 +871,8 @@ async def process_one(
     timeout_ms: int,
     force_headed: bool,
     dry_run: bool,
+    sync_douban_watch: bool = True,
+    expand_recommendations: bool = False,
 ) -> None:
     dbp = app_db_path()
     if not dbp.is_file():
@@ -496,7 +955,27 @@ async def process_one(
     if use_http and not dry_run:
         ensure_cover_downloaded_local(data, cover_cache_dir)
 
-    patch = subject_data_to_update(data, kind_hint=kind_hint, cover_cache_dir=cover_cache_dir)
+    patch = subject_data_to_update(
+        data,
+        kind_hint=kind_hint,
+        cover_cache_dir=cover_cache_dir,
+        sync_douban_watch=sync_douban_watch,
+    )
+
+    ok, reason = verify_resolved_title(
+        returned_title_zh=patch.get("title_zh"),
+        returned_title_en=patch.get("title_en"),
+        search_title=search_title,
+        existing_title_zh=str(title_zh_existing or ""),
+        nas_library_path=nas_library_path,
+    )
+    if not ok:
+        print(
+            f"[guard] 拒绝写入 id={work_id} path={nas_library_path!r}: {reason}",
+            flush=True,
+        )
+        return
+
     prev = load_previous_metadata_json(metadata_path if isinstance(metadata_path, str) else None)
     merged = build_merged_metadata(prev, data, nas_library_path=nas_library_path, patch=patch)
 
@@ -509,60 +988,147 @@ async def process_one(
     if dry_run:
         print("[dry-run] 将写入 metadata:", new_meta_path)
         print("[dry-run] 将 UPDATE:", json.dumps(patch, ensure_ascii=False, indent=2)[:800])
-        return
+    else:
+        new_meta_path.write_text(json.dumps(merged, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    new_meta_path.write_text(json.dumps(merged, ensure_ascii=False, indent=2), encoding="utf-8")
+        conn = sqlite3.connect(str(dbp))
+        try:
+            new_sid = patch.get("douban_subject_id")
+            if new_sid:
+                other = conn.execute(
+                    "SELECT id, nas_library_path FROM media_work WHERE douban_subject_id = ? AND id != ?",
+                    (new_sid, work_id),
+                ).fetchone()
+                if other:
+                    other_id, other_nas = other[0], (other[1] or "")
+                    other_is_placeholder = other_nas.startswith("meta:douban:")
+                    current_is_placeholder = (nas_library_path or "").startswith("meta:douban:")
+                    if other_is_placeholder:
+                        ph_tags = [
+                            r[0] for r in conn.execute(
+                                "SELECT tag_id FROM media_work_tag WHERE work_id = ?", (other_id,)
+                            ).fetchall()
+                        ]
+                        for tid in ph_tags:
+                            conn.execute(
+                                "INSERT OR IGNORE INTO media_work_tag(work_id, tag_id) VALUES(?, ?)",
+                                (work_id, tid),
+                            )
+                        conn.execute("DELETE FROM media_work_tag WHERE work_id = ?", (other_id,))
+                        conn.execute("DELETE FROM media_work WHERE id = ?", (other_id,))
+                        conn.commit()
+                        print(f"     [merge] 占位行 id={other_id} 已合并到种子行 id={work_id} 并删除", flush=True)
+                    elif current_is_placeholder and not other_is_placeholder:
+                        # 当前是占位、对方是 NAS 真实条目：NAS 才是权威。绝不能删 NAS 行；删掉本占位行，避免 sid 冲突。
+                        conn.execute("DELETE FROM media_work_tag WHERE work_id = ?", (work_id,))
+                        conn.execute("DELETE FROM media_work WHERE id = ?", (work_id,))
+                        conn.commit()
+                        print(
+                            f"     [skip-merge-safe] sid={new_sid} 已存在 NAS 行 id={other_id}（{other_nas!r}），"
+                            f"删除当前占位 id={work_id} 让位；NAS 行未被改动",
+                            flush=True,
+                        )
+                        return
+                    else:
+                        # 两个 NAS 行都同 sid（极罕见）：不动，提醒一下
+                        print(
+                            f"     [warn-dup-nas-sid] sid={new_sid} 在 NAS 行 id={work_id} 与 id={other_id} 都存在；本次不做合并删除",
+                            flush=True,
+                        )
 
-    conn = sqlite3.connect(str(dbp))
-    try:
-        conn.execute(
-            """
-            UPDATE media_work SET
-              title_zh = ?,
-              title_en = ?,
-              normalized_title = ?,
-              media_type = ?,
-              year = ?,
-              country = ?,
-              language = ?,
-              douban_rating = ?,
-              summary = ?,
-              directors_json = ?,
-              actors_json = ?,
-              poster_url = ?,
-              match_status = ?,
-              search_text = ?,
-              metadata_path = ?,
-              updated_at = ?
-            WHERE id = ?
-            """,
-            (
-                patch["title_zh"],
-                patch["title_en"],
-                patch["normalized_title"],
-                patch["media_type"],
-                patch["year"],
-                patch["country"],
-                patch["language"],
-                patch["douban_rating"],
-                patch["summary"],
-                patch["directors_json"],
-                patch["actors_json"],
-                patch["poster_url"],
-                patch["match_status"],
-                patch["search_text"],
-                str(new_meta_path),
-                now_ms,
-                work_id,
-            ),
-        )
-        conn.commit()
-    finally:
-        conn.close()
+            conn.execute(
+                """
+                UPDATE media_work SET
+                  title_zh = ?,
+                  title_en = ?,
+                  normalized_title = ?,
+                  media_type = ?,
+                  year = ?,
+                  country = ?,
+                  language = ?,
+                  douban_rating = ?,
+                  summary = ?,
+                  directors_json = ?,
+                  actors_json = ?,
+                  poster_url = ?,
+                  match_status = ?,
+                  search_text = ?,
+                  douban_subject_id = COALESCE(?, douban_subject_id),
+                  watch_status = COALESCE(?, watch_status),
+                  watched_at = COALESCE(?, watched_at),
+                  metadata_path = ?,
+                  updated_at = ?
+                WHERE id = ?
+                """,
+                (
+                    patch["title_zh"],
+                    patch["title_en"],
+                    patch["normalized_title"],
+                    patch["media_type"],
+                    patch["year"],
+                    patch["country"],
+                    patch["language"],
+                    patch["douban_rating"],
+                    patch["summary"],
+                    patch["directors_json"],
+                    patch["actors_json"],
+                    patch["poster_url"],
+                    patch["match_status"],
+                    patch["search_text"],
+                    patch["douban_subject_id"],
+                    patch.get("watch_status"),
+                    patch.get("watched_at_sec"),
+                    str(new_meta_path),
+                    now_ms,
+                    work_id,
+                ),
+            )
+            conn.commit()
 
-    print(f"[ok] 已更新 id={work_id} metadata_path={new_meta_path}")
-    if urls:
-        print("     source_urls:", urls[:3])
+            genres = data.get("genres") if isinstance(data.get("genres"), list) else []
+            tag_slugs = _genres_to_slugs(genres)
+            if tag_slugs:
+                _sync_work_tags(conn, work_id, tag_slugs)
+                conn.commit()
+        finally:
+            conn.close()
+
+        print(f"[ok] 已更新 id={work_id} metadata_path={new_meta_path}")
+        if patch.get("watch_status") == "watched":
+            extra = f" watched_at_sec={patch['watched_at_sec']}" if patch.get("watched_at_sec") is not None else ""
+            print(f"     观影: 已同步为「已看」{extra}", flush=True)
+        if urls:
+            print("     source_urls:", urls[:3])
+
+    recs = data.get("recommendSameSubjects") if isinstance(data.get("recommendSameSubjects"), list) else []
+    _expand_cap = 10
+    if expand_recommendations and recs:
+        rec_sids = [str(r.get("subjectId", "")).strip() for r in recs if str(r.get("subjectId", "")).strip().isdigit()]
+        conn2 = sqlite3.connect(str(dbp))
+        try:
+            existing = _existing_douban_subject_ids(conn2, rec_sids)
+        finally:
+            conn2.close()
+        todo = [r for r in recs if str(r.get("subjectId", "")).strip() not in existing]
+        print(f"     [expand] 详情页推荐区 {len(recs)} 条，已入库 {len(existing)}，待拉取详情至多 {_expand_cap} 条", flush=True)
+        for ri, rec in enumerate(todo[:_expand_cap]):
+            await asyncio.sleep(1.5 + (ri % 3) * 0.5)
+            try:
+                await _expand_one_recommendation(
+                    bm,
+                    use_http=use_http,
+                    crawler_agent_base=crawler_agent_base,
+                    crawler_api_key=crawler_api_key,
+                    rec=rec,
+                    cover_cache_dir=cover_cache_dir,
+                    public_base_url=public_base_url,
+                    timeout_ms=timeout_ms,
+                    force_headed=force_headed,
+                    dry_run=dry_run,
+                    sync_douban_watch=sync_douban_watch,
+                )
+            except Exception as e:
+                print(f"  [rec-exception] {rec.get('title')!r}: {type(e).__name__}: {e}", flush=True)
 
 
 async def amain(argv: list[str] | None = None) -> int:
@@ -591,6 +1157,29 @@ async def amain(argv: list[str] | None = None) -> int:
         help="与 --all-library 联用：仅补全尚无豆瓣评分的电影/电视剧（推荐）",
     )
     parser.add_argument(
+        "--min-douban-rating",
+        type=float,
+        default=None,
+        metavar="SCORE",
+        help="与 --all-library + --movie-only 联用：按资源库内已有豆瓣评分筛选（>= SCORE），高分优先；可重抓已写分条目作种子批次",
+    )
+    parser.add_argument(
+        "--movie-only",
+        action="store_true",
+        help="与 --all-library 联用：仅电影（与 --min-douban-rating 组合时为高分电影种子）",
+    )
+    parser.add_argument(
+        "--min-douban-rating-strict",
+        action="store_true",
+        help="与 --min-douban-rating 联用：筛选改为严格大于评分阈值（> 而非 >=），例如 8 表示不含正好 8.0 分",
+    )
+    parser.add_argument(
+        "--seed-source",
+        choices=("nas", "placeholder", "all"),
+        default="nas",
+        help="种子来源：nas（默认；只挑 NAS 资源库下真实条目）/ placeholder（只挑 meta:douban: 占位行）/ all（两者并集）",
+    )
+    parser.add_argument(
         "--crawler-agent-url",
         default=None,
         help="豆瓣解析 HTTP 基址（默认环境变量 CRAWLER_AGENT_URL，否则 http://192.168.124.24:5533）",
@@ -608,35 +1197,86 @@ async def amain(argv: list[str] | None = None) -> int:
     parser.add_argument("--dry-run", action="store_true", help="只拉豆瓣并打印，不写库")
     parser.add_argument("--force-headed", action=argparse.BooleanOptionalAction, default=True, help="是否 headed 浏览器（默认 true）")
     parser.add_argument("--timeout-ms", type=int, default=180_000)
+    parser.add_argument(
+        "--no-sync-douban-watch",
+        action="store_true",
+        help="不把豆瓣登录态下的「看过」同步到 media_work.watch_status / watched_at（默认会同步）",
+    )
+    parser.add_argument(
+        "--expand-recommendations",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="每条种子解析完豆瓣详情后，再对该片详情页「推荐 / 同好」区解析出的条目（与爬虫 recommendSame 一致，至多 10 条）"
+        "逐一再拉详情并写入占位行；未传本参数时，若使用 --all-library --min-douban-rating --movie-only 则默认开启。"
+        "YAML 可在根级写 expand_recommendations: true（可被本参数覆盖）。",
+    )
+    parser.add_argument(
+        "--allow-concurrent",
+        action="store_true",
+        help="跳过 walter_data/.enrich.lock 互斥；仅在你确认豆瓣后端可安全并发时使用。",
+    )
     args = parser.parse_args(argv)
 
     if getattr(args, "fix_tv_display_titles_in_db", False):
         return run_fix_tv_display_titles_in_db()
 
-    if args.all_library and not (args.only_incomplete_douban or args.skip_if_douban_rating):
+    lock_handle = acquire_enrich_lock(allow_concurrent=bool(getattr(args, "allow_concurrent", False)))
+
+    min_rating = getattr(args, "min_douban_rating", None)
+    movie_only = bool(getattr(args, "movie_only", False))
+
+    if args.all_library and min_rating is None and not (args.only_incomplete_douban or args.skip_if_douban_rating):
         parser.error(
             "与 --all-library 批量补全时须指定 --only-incomplete-douban 或 --skip-if-douban-rating，"
-            "以免对已写入 douban_rating 的条目全量重跑"
+            "以免对已写入 douban_rating 的条目全量重跑；若有意按高分选电影种子，请用 --min-douban-rating + --movie-only"
         )
 
+    if args.all_library and min_rating is not None:
+        if not movie_only:
+            parser.error("--min-douban-rating 须与 --movie-only 同时使用（本批次仅针对电影）")
+        if args.only_incomplete_douban or args.skip_if_douban_rating:
+            parser.error("--min-douban-rating 与 --only-incomplete-douban / --skip-if-douban-rating 互斥")
+        if min_rating <= 0 or min_rating > 10:
+            parser.error("--min-douban-rating 须在 (0, 10] 内")
+
+    expand_from_yaml: bool | None = None
     if args.all_library:
         dbp = app_db_path()
         if not dbp.is_file():
             print(f"未找到数据库: {dbp}", flush=True)
             return 2
-        only_inc = bool(args.only_incomplete_douban or args.skip_if_douban_rating)
-        entries = load_all_library_entries(
-            dbp,
-            nas_root=args.nas_library_root,
-            limit=args.limit,
-            offset=args.offset,
-            skip_if_douban_rating=args.skip_if_douban_rating,
-            only_incomplete_douban=args.only_incomplete_douban,
-        )
-        print(
-            f"[all-library] 共 {len(entries)} 条待处理（only_incomplete_douban={only_inc}）",
-            flush=True,
-        )
+        if min_rating is not None:
+            strict_gt = bool(getattr(args, "min_douban_rating_strict", False))
+            seed_src = str(getattr(args, "seed_source", "nas"))
+            entries = load_movie_library_entries_by_min_douban_rating(
+                dbp,
+                min_rating=min_rating,
+                nas_root=args.nas_library_root,
+                limit=args.limit,
+                offset=args.offset,
+                strict_greater_than=strict_gt,
+                seed_source=seed_src,
+            )
+            op = ">" if strict_gt else ">="
+            print(
+                f"[all-library] 高分电影种子 douban_rating{op}{min_rating} seed-source={seed_src} "
+                f"offset={args.offset} 共 {len(entries)} 条",
+                flush=True,
+            )
+        else:
+            only_inc = bool(args.only_incomplete_douban or args.skip_if_douban_rating)
+            entries = load_all_library_entries(
+                dbp,
+                nas_root=args.nas_library_root,
+                limit=args.limit,
+                offset=args.offset,
+                skip_if_douban_rating=args.skip_if_douban_rating,
+                only_incomplete_douban=args.only_incomplete_douban,
+            )
+            print(
+                f"[all-library] 共 {len(entries)} 条待处理（only_incomplete_douban={only_inc}）",
+                flush=True,
+            )
         if not entries:
             print("无条目，退出", flush=True)
             return 0
@@ -645,7 +1285,7 @@ async def amain(argv: list[str] | None = None) -> int:
         if not cfg_path.is_file():
             print(f"配置文件不存在: {cfg_path}", flush=True)
             return 2
-        entries = load_config(cfg_path)
+        entries, expand_from_yaml = load_config(cfg_path)
     else:
         parser.error("须指定 --config PATH 或 --all-library")
     settings = get_settings()
@@ -660,6 +1300,24 @@ async def amain(argv: list[str] | None = None) -> int:
         print(f"[enrich] 豆瓣后端: HTTP {crawler_base}", flush=True)
     else:
         print("[enrich] 豆瓣后端: 本机 Playwright（--local-douban）", flush=True)
+
+    sync_watch = not bool(getattr(args, "no_sync_douban_watch", False))
+    if args.expand_recommendations is not None:
+        expand_recs = bool(args.expand_recommendations)
+    elif expand_from_yaml is not None:
+        expand_recs = bool(expand_from_yaml)
+    else:
+        expand_recs = bool(args.all_library and min_rating is not None and movie_only)
+    if args.expand_recommendations is not None:
+        expand_note = "开（CLI）" if args.expand_recommendations else "关（CLI）"
+    elif expand_from_yaml is not None:
+        expand_note = "开（YAML）" if expand_from_yaml else "关（YAML）"
+    elif expand_recs:
+        expand_note = "开（默认：--min-douban-rating 电影种子批次）"
+    else:
+        expand_note = "关"
+    print(f"[enrich] 观影同步: {'开' if sync_watch else '关（--no-sync-douban-watch）'}", flush=True)
+    print(f"[enrich] 推荐扩散（每种子至多 10 部详情）: {expand_note}", flush=True)
 
     bm: BrowserManager | None = BrowserManager(settings) if args.local_douban else None
     failed = 0
@@ -683,6 +1341,8 @@ async def amain(argv: list[str] | None = None) -> int:
                     timeout_ms=args.timeout_ms,
                     force_headed=args.force_headed,
                     dry_run=args.dry_run,
+                    sync_douban_watch=sync_watch,
+                    expand_recommendations=expand_recs,
                 )
             except Exception as e:
                 failed += 1
@@ -696,6 +1356,12 @@ async def amain(argv: list[str] | None = None) -> int:
     finally:
         if bm is not None:
             await bm.shutdown()
+        if lock_handle is not None:
+            try:
+                fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+            except OSError:
+                pass
+            lock_handle.close()
     if failed:
         print(f"\n[summary] 共 {total} 条，其中 {failed} 条因异常失败，其余已处理。", flush=True)
     return 1 if failed else 0

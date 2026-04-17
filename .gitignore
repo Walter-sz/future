@@ -14,3 +14,7 @@
 /portal/.next/
 /portal/out/
 /agent-media/node_modules/
+
+# macOS 系统垃圾文件
+.DS_Store
+**/.DS_Store

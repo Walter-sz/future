@@ -1,0 +1,163 @@
+# 资源库内豆瓣评分 >= 8 的电影，按分数降序取前 50 部作为本批种子（nas 须在资源库根下）。
+# 每条种子会拉豆瓣详情；下方 expand_recommendations 为 true 时，再对该片详情页推荐区至多 10 部逐条拉详情并写占位行。
+# 命令行等价（不写 YAML 时也会默认开推荐扩散）：
+#   WALTER_DATA_DIR=../walter_data PYTHONPATH=src python -m crawler_agent.tools.enrich_library_douban \
+#     --all-library --min-douban-rating 8 --movie-only --limit 50
+# 若不要推荐扩散：追加 --no-expand-recommendations
+# 干跑：追加 --dry-run
+
+expand_recommendations: true
+
+entries:
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/肖申克的救赎
+  search_title: 肖申克的救赎
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/控方证人
+  search_title: 控方证人
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/阿甘正传
+  search_title: 阿甘正传
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/汉密尔顿
+  search_title: 汉密尔顿
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/十二怒汉
+  search_title: 十二怒汉
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/教父系列
+  search_title: 教父
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/海上钢琴师
+  search_title: 海上钢琴师
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/Piper 2016_Piper
+  search_title: 鹬
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/海蒂和爷爷
+  search_title: 海蒂和爷爷
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/海豚湾
+  search_title: 海豚湾
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/生之欲_Ikiru
+  search_title: 生之欲 生きる
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/熔炉
+  search_title: 熔炉 도가니
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/放牛班的春天
+  search_title: 放牛班的春天
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/战争与和平
+  search_title: 战争与和平 Война и мир
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/Its a Wonderful Life 1946_Its a Wonderful
+    Life
+  search_title: 生活多美好
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/辩护人
+  search_title: 辩护人 변호인
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/指环王与霍比特人系列6部曲
+  search_title: 指环王1：护戒使者
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/黑客帝国
+  search_title: 黑客帝国
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/The Complete Matrix Trilogy Bluray 720p DTS
+    2Audio x264-CHD_The Complete Matrix Trilogy Bluray 720p DTS 2Audio x264-CHD
+  search_title: 黑客帝国
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/少年派的奇幻漂流_Life of Pi
+  search_title: 少年派的奇幻漂流
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/从海底出击
+  search_title: 从海底出击
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/脸庞，村庄
+  search_title: 脸庞，村庄
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/沉静如海_Le silence de la mer
+  search_title: 沉静如海
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/两杆大烟枪_Lock Stock and Two Smoking Barrels
+  search_title: 两杆大烟枪
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/天地玄黄
+  search_title: 天地玄黄
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/轮回
+  search_title: 轮回
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/用心棒_Yojimbo
+  search_title: 用心棒
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/搏击俱乐部
+  search_title: 搏击俱乐部
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/致命ID_Identity
+  search_title: 致命ID
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/一个叫欧维的男人决定去死
+  search_title: 一个叫欧维的男人决定去死
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/爱在午夜降临前_Before Midnight
+  search_title: 爱在午夜降临前
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/菊次郎的夏天
+  search_title: 菊次郎的夏天 菊次郎の夏
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/7号房的礼物
+  search_title: 7号房的礼物
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/自闭历程
+  search_title: 自闭历程
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/与狼共舞
+  search_title: 与狼共舞
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/爱在日落黄昏时_Before Sunset
+  search_title: 爱在日落黄昏时
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/哭泣的草原
+  search_title: 哭泣的草原 Τριλογία
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/断背山_Brokeback Mountain
+  search_title: 断背山
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/莫里斯_Maurice
+  search_title: 莫里斯
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/终结者2
+  search_title: 终结者2：审判日
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/爱尔兰人
+  search_title: 爱尔兰人
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/寄生虫
+  search_title: 寄生虫 기생충
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/回到未来_Back to the Future
+  search_title: 回到未来
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/重庆森林
+  search_title: 重庆森林 重慶森林
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/被解救的姜戈
+  search_title: 被解救的姜戈
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/无耻混蛋
+  search_title: 无耻混蛋
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/坠落的审判
+  search_title: 坠落的审判
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/冰川时代_Ice Age
+  search_title: 冰川时代
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/傲慢与偏见
+  search_title: 傲慢与偏见
+- kind_hint: movie
+  nas_library_path: /volume1/homes/影视资源库/昨天_Quitting
+  search_title: 昨天
