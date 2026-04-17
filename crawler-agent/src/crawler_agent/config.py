@@ -12,12 +12,21 @@ _ROOT = Path(__file__).resolve().parents[2]
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="CRAWLER_", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_prefix="CRAWLER_",
+        env_file=str(_ROOT / ".env"),
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
     # ---- server ----
     host: str = "0.0.0.0"
     port: int = 5533
     api_key: str | None = None
+
+    # ---- reverse-WS bridge to Nezu server ----
+    nezu_url: str | None = None
+    nezu_agent_id: str = "mac-01"
 
     # ---- browser / data dirs ----
     profile_dir: Path = Field(default=_ROOT / "data" / "browser-profiles")

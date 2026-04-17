@@ -24,6 +24,7 @@ dependencies = [
 
 [project.scripts]
 crawler-agent = "crawler_agent.main:run_cli"
+crawler-agent-bridge = "crawler_agent.reverse_ws:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
