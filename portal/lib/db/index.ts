@@ -3,7 +3,7 @@ import { drizzle } from "drizzle-orm/better-sqlite3";
 import fs from "fs";
 import path from "path";
 import { getPersistenceRoot } from "@/lib/persistence";
-import { ensureMediaDataDirs } from "@/lib/media-storage";
+import { ensureMediaDataDirs, ensureStudyDataDirs } from "@/lib/media-storage";
 import * as schema from "./schema";
 
 const globalForDb = globalThis as unknown as {
@@ -96,6 +96,47 @@ const MEDIA_TAG_SEED_ROWS: [string, string][] = [
   ["history", "历史"],
   ["mystery", "推理"],
 ];
+
+function seedStudyDefaultTab(raw: Database.Database) {
+  try {
+    const row = raw
+      .prepare("SELECT 1 AS ok FROM study_tab WHERE tab_type = 'pinned_default' LIMIT 1")
+      .get() as { ok: number } | undefined;
+    if (row) return;
+    const now = Date.now();
+    raw
+      .prepare(
+        `INSERT INTO study_tab (title, tab_type, sort_order, config_json, created_at, updated_at)
+         VALUES (?, 'pinned_default', 0, '{}', ?, ?)`
+      )
+      .run("持续学习", now, now);
+  } catch {
+    /* ignore */
+  }
+}
+
+/**
+ * 在「已 bootstrap」的长驻进程（如 next dev HMR）中，ensureSchema 会整段跳过，
+ * 新增表必须在此用 IF NOT EXISTS 幂等补建。
+ */
+function ensureStudyTabTableIncremental(raw: Database.Database) {
+  try {
+    raw.exec(`
+      CREATE TABLE IF NOT EXISTS study_tab (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        title TEXT NOT NULL,
+        tab_type TEXT NOT NULL,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        config_json TEXT NOT NULL DEFAULT '{}',
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+    `);
+    seedStudyDefaultTab(raw);
+  } catch (e) {
+    console.error("[db] ensureStudyTabTableIncremental", e);
+  }
+}
 
 function seedMediaTags(raw: Database.Database) {
   try {
@@ -204,12 +245,22 @@ function ensureSchema(raw: Database.Database) {
       created_at INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS media_agent_run_event_idx ON media_agent_run_event(run_id, id);
+    CREATE TABLE IF NOT EXISTS study_tab (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      title TEXT NOT NULL,
+      tab_type TEXT NOT NULL,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      config_json TEXT NOT NULL DEFAULT '{}',
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
   `);
   migrateWeeklySpeedIllinoisRun(raw);
   migrateMediaWorkWatchColumns(raw);
   migrateMediaWorkUserMetaOverridesColumn(raw);
   migrateMediaWorkDoubanSubjectId(raw);
   seedMediaTags(raw);
+  seedStudyDefaultTab(raw);
   const now = Date.now();
   raw
     .prepare(
@@ -223,10 +274,12 @@ export function getDb() {
   const dbPath = getDbPath();
   fs.mkdirSync(path.dirname(dbPath), { recursive: true });
   ensureMediaDataDirs();
+  ensureStudyDataDirs();
   if (!globalForDb.__sqlite) {
     globalForDb.__sqlite = new Database(dbPath);
     ensureSchema(globalForDb.__sqlite);
   }
+  ensureStudyTabTableIncremental(globalForDb.__sqlite);
   return drizzle(globalForDb.__sqlite, { schema });
 }
 

@@ -23,3 +23,16 @@ export function ensureMediaDataDirs() {
   fs.mkdirSync(getMediaMetadataCacheDir(), { recursive: true });
   fs.mkdirSync(getMediaAgentRunsDir(), { recursive: true });
 }
+
+/** 持续学习模块：脑图等在 walter_data/study/ */
+export function getStudyDataRoot() {
+  return path.join(getPersistenceRoot(), "study");
+}
+
+export function getStudyMindmapsDir() {
+  return path.join(getStudyDataRoot(), "mindmaps");
+}
+
+export function ensureStudyDataDirs() {
+  fs.mkdirSync(getStudyMindmapsDir(), { recursive: true });
+}

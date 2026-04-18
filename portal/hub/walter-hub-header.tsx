@@ -5,7 +5,7 @@ import { usePathname } from "next/navigation";
 import { getAgentRouteTitle } from "@/hub/agents";
 
 const SUBPAGE_TITLES: Record<string, string> = {
-  "/study": "学习&知识管理",
+  "/study": "持续学习&知识管理",
   "/photos": "照片管理",
   "/movies": "影视资源",
   "/wealth": "财富管理",

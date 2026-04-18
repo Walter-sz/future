@@ -13,10 +13,10 @@ export function getWalterSections(): WalterSection[] {
   return [
     {
       id: "study",
-      title: "学习&知识管理",
-      description: "课程、笔记与知识库（待建设）",
+      title: "持续学习&知识管理",
+      description: "多 Tab 工作台：脑图（含 XMind 导入）、本地文件夹知识库与自动保存",
       href: "/study",
-      ready: false,
+      ready: true,
     },
     {
       id: "photos",

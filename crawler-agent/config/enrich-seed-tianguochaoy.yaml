@@ -1,0 +1,6 @@
+# 单种子：《天国王朝》→ 详情 + 详情页推荐扩散（每种子至多 10 条）
+expand_recommendations: true
+entries:
+  - search_title: 天国王朝
+    nas_library_path: meta:douban:1309071
+    kind_hint: movie

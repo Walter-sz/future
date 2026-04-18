@@ -1,5 +1,5 @@
-import { WalterPlaceholderPage } from "@/hub/placeholder-page";
+import { StudyWorkspace } from "@/components/study/StudyWorkspace";
 
 export default function StudyPage() {
-  return <WalterPlaceholderPage title="学习&知识管理" />;
+  return <StudyWorkspace />;
 }

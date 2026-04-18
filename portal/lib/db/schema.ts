@@ -126,3 +126,15 @@ export const mediaAgentRunEvent = sqliteTable(
   },
   (t) => [uniqueIndex("media_agent_run_event_idx").on(t.runId, t.id)]
 );
+
+/** 持续学习 & 知识管理：Tab 配置（脑图文件路径等见 configJson） */
+export const studyTab = sqliteTable("study_tab", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  title: text("title").notNull(),
+  /** pinned_default | mindmap | folder */
+  tabType: text("tab_type").notNull(),
+  sortOrder: integer("sort_order").notNull().default(0),
+  configJson: text("config_json").notNull().default("{}"),
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+});

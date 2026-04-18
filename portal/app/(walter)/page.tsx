@@ -9,7 +9,7 @@ export default function WalterHomePage() {
           功能板块
         </h2>
         <p className="mb-6 max-w-2xl text-sm leading-relaxed text-slate-600">
-          按业务域进入各功能空间。除小川足球外，其余为预留位，后续逐步建设。
+          按业务域进入各功能空间。小川足球、影视资源、持续学习&amp;知识管理等已接入，其余板块仍在建设中。
         </p>
         <WalterSectionGrid />
       </section>
