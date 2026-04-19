@@ -14,7 +14,7 @@ import time
 import traceback
 import urllib.error
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -173,15 +173,30 @@ def split_canonical_title(canonical: str | None) -> tuple[str, str]:
     return s, ""
 
 
+"""Walter 使用豆瓣账号的启用下限；早于此日期的观看日期视为页面发行日期误解析。"""
+_DOUBAN_SEEN_MIN_YMD = "2015-01-01"
+
+
 def _douban_seen_day_to_utc_noon_sec(day: str | None) -> int | None:
-    """豆瓣常见仅有日期；用 UTC 正午落库（秒级），避免时区边界显示成前一天。"""
+    """豆瓣常见仅有日期；用 UTC 正午落库（秒级），避免时区边界显示成前一天。
+
+    若 ``day`` 早于 :data:`_DOUBAN_SEEN_MIN_YMD` 或晚于今天 +1 天，视为非法，返回 ``None``，
+    以保护已有 ``watched_at`` 不被页面上的发行日期/评论日期覆盖。
+    """
     if not day or not isinstance(day, str):
         return None
     m = re.match(r"^(\d{4})-(\d{2})-(\d{2})$", day.strip())
     if not m:
         return None
     y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
-    dt = datetime(y, mo, d, 12, 0, 0, tzinfo=timezone.utc)
+    try:
+        dt = datetime(y, mo, d, 12, 0, 0, tzinfo=timezone.utc)
+    except ValueError:
+        return None
+    if day.strip() < _DOUBAN_SEEN_MIN_YMD:
+        return None
+    if dt > datetime.now(timezone.utc) + timedelta(days=1):
+        return None
     return int(dt.timestamp())
 
 
@@ -412,20 +427,35 @@ def load_movie_library_entries_by_min_douban_rating(
     return out
 
 
-def load_config(path: Path) -> tuple[list[dict[str, Any]], bool | None]:
-    """返回 (entries, expand_recommendations_or_none)。根级 ``expand_recommendations: true/false`` 可选。"""
+def load_config(path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """返回 ``(entries, options)``。
+
+    支持的根级字段（均可省略，由 CLI 覆盖）:
+
+    - ``expand_recommendations``: bool
+    - ``force_refresh_seeds``: bool，强制忽略「种子缓存已完整」判定，重跑豆瓣抓取
+    - ``seed_cache_min_recommend``: int，判断「已完整」的推荐列表最小长度（默认 8）
+    """
     text = path.read_text(encoding="utf-8")
     data = yaml.safe_load(text)
     if not isinstance(data, dict) or "entries" not in data:
         raise ValueError("配置文件须为 { entries: [ ... ] } 结构")
+    options: dict[str, Any] = {}
     raw_expand = data.get("expand_recommendations")
-    expand_flag: bool | None
-    if raw_expand is None:
-        expand_flag = None
-    elif isinstance(raw_expand, bool):
-        expand_flag = raw_expand
-    else:
-        raise ValueError("expand_recommendations 须为布尔值（可选）")
+    if raw_expand is not None:
+        if not isinstance(raw_expand, bool):
+            raise ValueError("expand_recommendations 须为布尔值（可选）")
+        options["expand_recommendations"] = raw_expand
+    raw_force = data.get("force_refresh_seeds")
+    if raw_force is not None:
+        if not isinstance(raw_force, bool):
+            raise ValueError("force_refresh_seeds 须为布尔值（可选）")
+        options["force_refresh_seeds"] = raw_force
+    raw_min = data.get("seed_cache_min_recommend")
+    if raw_min is not None:
+        if not isinstance(raw_min, int) or raw_min < 1:
+            raise ValueError("seed_cache_min_recommend 须为 ≥1 的整数（可选）")
+        options["seed_cache_min_recommend"] = raw_min
     entries = data["entries"]
     if not isinstance(entries, list) or not entries:
         raise ValueError("entries 须为非空数组")
@@ -443,7 +473,7 @@ def load_config(path: Path) -> tuple[list[dict[str, Any]], bool | None]:
         if kh not in ("auto", "movie", "tv"):
             raise ValueError(f"entries[{i}].kind_hint 须为 auto|movie|tv")
         out.append({"search_title": st.strip(), "nas_library_path": nas.strip(), "kind_hint": kh})
-    return out, expand_flag
+    return out, options
 
 
 def load_previous_metadata_json(metadata_path: str | None) -> dict[str, Any]:
@@ -689,6 +719,103 @@ def _douban_placeholder_nas_path(subject_id: str) -> str:
     return f"{_DOUBAN_PLACEHOLDER_PREFIX}{subject_id.strip()}"
 
 
+"""判断「种子缓存已完整」所需的默认推荐区最小长度。"""
+SEED_CACHE_MIN_RECOMMEND_DEFAULT = 8
+
+
+def _is_blankish(value: Any) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, str):
+        return not value.strip()
+    if isinstance(value, (list, dict, tuple, set)):
+        return len(value) == 0
+    return False
+
+
+def evaluate_seed_cache(
+    conn: sqlite3.Connection,
+    work_id: int,
+    *,
+    min_recommend: int,
+) -> dict[str, Any]:
+    """判断本条种子是否 **已充分抓取**，可跳过豆瓣抓取阶段。
+
+    判定口径（任一条不满足 → miss）：
+
+    1. ``media_work`` 主要字段齐全：``title_zh / year / douban_subject_id / douban_rating /
+       summary / directors_json(≥1 项) / poster_url``
+    2. ``metadata_path`` 指向可读文件
+    3. metadata JSON 里 ``doubanRecommendSameSubjects`` 是列表，且其中有效条目（含数字
+       ``subjectId`` + 非空 ``title``）≥ ``min_recommend``
+
+    返回 ``{"hit": bool, "reasons": [...], "recs": [...], "title_zh": str | None}``。
+    即使 ``hit=False``，若已能解析出部分推荐列表，仍会把 ``recs`` 一并返回，便于上层酌情使用。
+    """
+    row = conn.execute(
+        "SELECT title_zh, year, douban_subject_id, douban_rating, summary, "
+        "directors_json, poster_url, metadata_path "
+        "FROM media_work WHERE id = ?",
+        (work_id,),
+    ).fetchone()
+    if not row:
+        return {"hit": False, "reasons": ["row_not_found"], "recs": [], "title_zh": None}
+    title_zh, year, sid, rating, summary, directors_json, poster_url, mp = row
+    reasons: list[str] = []
+    if _is_blankish(title_zh):
+        reasons.append("missing_title_zh")
+    if year is None:
+        reasons.append("missing_year")
+    if _is_blankish(sid):
+        reasons.append("missing_douban_subject_id")
+    if rating is None:
+        reasons.append("missing_douban_rating")
+    if _is_blankish(summary):
+        reasons.append("missing_summary")
+    try:
+        dirs = json.loads(directors_json or "[]")
+    except (ValueError, TypeError):
+        dirs = []
+    if not (isinstance(dirs, list) and len(dirs) >= 1):
+        reasons.append("missing_directors")
+    if _is_blankish(poster_url):
+        reasons.append("missing_poster_url")
+
+    valid_recs: list[dict[str, str]] = []
+    if not mp or not isinstance(mp, str) or not Path(mp).is_file():
+        reasons.append("missing_metadata_file")
+    else:
+        try:
+            meta = json.loads(Path(mp).read_text(encoding="utf-8"))
+        except (ValueError, OSError):
+            meta = None
+            reasons.append("bad_metadata_json")
+        if isinstance(meta, dict):
+            recs_all = meta.get("doubanRecommendSameSubjects")
+            if not isinstance(recs_all, list):
+                reasons.append("no_recommend_list")
+            else:
+                for r in recs_all:
+                    if not isinstance(r, dict):
+                        continue
+                    sid_r = str(r.get("subjectId", "")).strip()
+                    ttl = str(r.get("title", "")).strip()
+                    if sid_r.isdigit() and ttl:
+                        entry = {"subjectId": sid_r, "title": ttl}
+                        if isinstance(r.get("url"), str):
+                            entry["url"] = r["url"]
+                        valid_recs.append(entry)
+                if len(valid_recs) < min_recommend:
+                    reasons.append(f"recommend_count<{min_recommend}")
+
+    return {
+        "hit": not reasons,
+        "reasons": reasons,
+        "recs": valid_recs,
+        "title_zh": title_zh,
+    }
+
+
 def _existing_douban_subject_ids(conn: sqlite3.Connection, sids: list[str]) -> set[str]:
     if not sids:
         return set()
@@ -857,6 +984,63 @@ async def _expand_one_recommendation(
     print(f"  [rec-ok] {rec_title!r} sid={sid}{ws}", flush=True)
 
 
+async def _drive_expand_for_recs(
+    bm: BrowserManager | None,
+    dbp: Path,
+    recs: list[dict[str, Any]],
+    *,
+    use_http: bool,
+    crawler_agent_base: str | None,
+    crawler_api_key: str | None,
+    cover_cache_dir: Path,
+    public_base_url: str | None,
+    timeout_ms: int,
+    force_headed: bool,
+    dry_run: bool,
+    sync_douban_watch: bool,
+) -> None:
+    """对给定推荐区列表逐条走扩散抓取：已入库 sid 跳过，新 sid 调用豆瓣写占位行。"""
+    if not recs:
+        return
+    _expand_cap = 10
+    rec_sids = [
+        str(r.get("subjectId", "")).strip()
+        for r in recs
+        if str(r.get("subjectId", "")).strip().isdigit()
+    ]
+    conn2 = sqlite3.connect(str(dbp))
+    try:
+        existing = _existing_douban_subject_ids(conn2, rec_sids)
+    finally:
+        conn2.close()
+    todo = [r for r in recs if str(r.get("subjectId", "")).strip() not in existing]
+    print(
+        f"     [expand] 详情页推荐区 {len(recs)} 条，已入库 {len(existing)}，待拉取详情至多 {_expand_cap} 条",
+        flush=True,
+    )
+    for ri, rec in enumerate(todo[:_expand_cap]):
+        await asyncio.sleep(1.5 + (ri % 3) * 0.5)
+        try:
+            await _expand_one_recommendation(
+                bm,
+                use_http=use_http,
+                crawler_agent_base=crawler_agent_base,
+                crawler_api_key=crawler_api_key,
+                rec=rec,
+                cover_cache_dir=cover_cache_dir,
+                public_base_url=public_base_url,
+                timeout_ms=timeout_ms,
+                force_headed=force_headed,
+                dry_run=dry_run,
+                sync_douban_watch=sync_douban_watch,
+            )
+        except Exception as e:
+            print(
+                f"  [rec-exception] {rec.get('title')!r}: {type(e).__name__}: {e}",
+                flush=True,
+            )
+
+
 async def process_one(
     bm: BrowserManager | None,
     *,
@@ -873,6 +1057,8 @@ async def process_one(
     dry_run: bool,
     sync_douban_watch: bool = True,
     expand_recommendations: bool = False,
+    force_refresh_seed: bool = False,
+    seed_cache_min_recommend: int = SEED_CACHE_MIN_RECOMMEND_DEFAULT,
 ) -> None:
     dbp = app_db_path()
     if not dbp.is_file():
@@ -893,6 +1079,54 @@ async def process_one(
         return
 
     work_id, metadata_path, title_zh_existing = row
+
+    # 种子缓存判定：默认开启；若完整且不强制刷新，则跳过豆瓣抓取，直接用缓存推荐驱动扩散。
+    if not force_refresh_seed:
+        conn_cache = sqlite3.connect(str(dbp))
+        try:
+            cache = evaluate_seed_cache(
+                conn_cache,
+                int(work_id),
+                min_recommend=max(1, int(seed_cache_min_recommend)),
+            )
+        finally:
+            conn_cache.close()
+        if cache.get("hit"):
+            cached_title = cache.get("title_zh") or title_zh_existing
+            recs_cached = cache.get("recs") or []
+            print(
+                f"[seed-cache] id={work_id} title={cached_title!r} path={nas_library_path!r} "
+                f"recs={len(recs_cached)} 跳过豆瓣抓取（缓存已完整）",
+                flush=True,
+            )
+            if not expand_recommendations:
+                print("     [seed-cache] 未启用扩散，无事可做；跳过", flush=True)
+                return
+            if dry_run:
+                print("     [seed-cache] dry-run：将使用缓存推荐驱动扩散（此处不实际抓取）", flush=True)
+                return
+            await _drive_expand_for_recs(
+                bm,
+                dbp,
+                recs_cached,
+                use_http=use_http,
+                crawler_agent_base=crawler_agent_base,
+                crawler_api_key=crawler_api_key,
+                cover_cache_dir=cover_cache_dir,
+                public_base_url=public_base_url,
+                timeout_ms=timeout_ms,
+                force_headed=force_headed,
+                dry_run=dry_run,
+                sync_douban_watch=sync_douban_watch,
+            )
+            return
+        else:
+            print(
+                f"[seed-cache-miss] id={work_id} path={nas_library_path!r} "
+                f"reasons={cache.get('reasons')}",
+                flush=True,
+            )
+
     queries = planned_douban_search_titles(search_title)
     data = None
     urls: list[str] = []
@@ -1101,34 +1335,21 @@ async def process_one(
             print("     source_urls:", urls[:3])
 
     recs = data.get("recommendSameSubjects") if isinstance(data.get("recommendSameSubjects"), list) else []
-    _expand_cap = 10
     if expand_recommendations and recs:
-        rec_sids = [str(r.get("subjectId", "")).strip() for r in recs if str(r.get("subjectId", "")).strip().isdigit()]
-        conn2 = sqlite3.connect(str(dbp))
-        try:
-            existing = _existing_douban_subject_ids(conn2, rec_sids)
-        finally:
-            conn2.close()
-        todo = [r for r in recs if str(r.get("subjectId", "")).strip() not in existing]
-        print(f"     [expand] 详情页推荐区 {len(recs)} 条，已入库 {len(existing)}，待拉取详情至多 {_expand_cap} 条", flush=True)
-        for ri, rec in enumerate(todo[:_expand_cap]):
-            await asyncio.sleep(1.5 + (ri % 3) * 0.5)
-            try:
-                await _expand_one_recommendation(
-                    bm,
-                    use_http=use_http,
-                    crawler_agent_base=crawler_agent_base,
-                    crawler_api_key=crawler_api_key,
-                    rec=rec,
-                    cover_cache_dir=cover_cache_dir,
-                    public_base_url=public_base_url,
-                    timeout_ms=timeout_ms,
-                    force_headed=force_headed,
-                    dry_run=dry_run,
-                    sync_douban_watch=sync_douban_watch,
-                )
-            except Exception as e:
-                print(f"  [rec-exception] {rec.get('title')!r}: {type(e).__name__}: {e}", flush=True)
+        await _drive_expand_for_recs(
+            bm,
+            dbp,
+            recs,
+            use_http=use_http,
+            crawler_agent_base=crawler_agent_base,
+            crawler_api_key=crawler_api_key,
+            cover_cache_dir=cover_cache_dir,
+            public_base_url=public_base_url,
+            timeout_ms=timeout_ms,
+            force_headed=force_headed,
+            dry_run=dry_run,
+            sync_douban_watch=sync_douban_watch,
+        )
 
 
 async def amain(argv: list[str] | None = None) -> int:
@@ -1211,6 +1432,21 @@ async def amain(argv: list[str] | None = None) -> int:
         "YAML 可在根级写 expand_recommendations: true（可被本参数覆盖）。",
     )
     parser.add_argument(
+        "--force-refresh-seeds",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="默认行为（不传本参数）：若种子在库中的元数据已完整（主要字段齐备 + 推荐列表达到阈值），"
+        "则跳过豆瓣抓取，直接用缓存推荐做扩散；显式 --force-refresh-seeds 会强制重新抓取每个种子。"
+        "YAML 可写 force_refresh_seeds: true/false（可被本参数覆盖）。",
+    )
+    parser.add_argument(
+        "--seed-cache-min-recommend",
+        type=int,
+        default=None,
+        help=f"「种子缓存已完整」的推荐列表最小长度，默认 {SEED_CACHE_MIN_RECOMMEND_DEFAULT}。"
+        "可在 YAML 根级用 seed_cache_min_recommend 覆盖（本参数再覆盖 YAML）。",
+    )
+    parser.add_argument(
         "--allow-concurrent",
         action="store_true",
         help="跳过 walter_data/.enrich.lock 互斥；仅在你确认豆瓣后端可安全并发时使用。",
@@ -1240,6 +1476,8 @@ async def amain(argv: list[str] | None = None) -> int:
             parser.error("--min-douban-rating 须在 (0, 10] 内")
 
     expand_from_yaml: bool | None = None
+    force_refresh_from_yaml: bool | None = None
+    seed_cache_min_from_yaml: int | None = None
     if args.all_library:
         dbp = app_db_path()
         if not dbp.is_file():
@@ -1285,7 +1523,10 @@ async def amain(argv: list[str] | None = None) -> int:
         if not cfg_path.is_file():
             print(f"配置文件不存在: {cfg_path}", flush=True)
             return 2
-        entries, expand_from_yaml = load_config(cfg_path)
+        entries, cfg_options = load_config(cfg_path)
+        expand_from_yaml = cfg_options.get("expand_recommendations")
+        force_refresh_from_yaml = cfg_options.get("force_refresh_seeds")
+        seed_cache_min_from_yaml = cfg_options.get("seed_cache_min_recommend")
     else:
         parser.error("须指定 --config PATH 或 --all-library")
     settings = get_settings()
@@ -1316,8 +1557,32 @@ async def amain(argv: list[str] | None = None) -> int:
         expand_note = "开（默认：--min-douban-rating 电影种子批次）"
     else:
         expand_note = "关"
+    if args.force_refresh_seeds is not None:
+        force_refresh_seeds = bool(args.force_refresh_seeds)
+        force_note = "开（CLI）" if force_refresh_seeds else "关（CLI）"
+    elif force_refresh_from_yaml is not None:
+        force_refresh_seeds = bool(force_refresh_from_yaml)
+        force_note = "开（YAML）" if force_refresh_seeds else "关（YAML）"
+    else:
+        force_refresh_seeds = False
+        force_note = "关（默认：已完整的种子跳过豆瓣抓取，用缓存推荐扩散）"
+
+    if args.seed_cache_min_recommend is not None:
+        if args.seed_cache_min_recommend < 1:
+            parser.error("--seed-cache-min-recommend 须为 ≥1 的整数")
+        seed_cache_min = int(args.seed_cache_min_recommend)
+        min_note = f"{seed_cache_min}（CLI）"
+    elif seed_cache_min_from_yaml is not None:
+        seed_cache_min = int(seed_cache_min_from_yaml)
+        min_note = f"{seed_cache_min}（YAML）"
+    else:
+        seed_cache_min = SEED_CACHE_MIN_RECOMMEND_DEFAULT
+        min_note = f"{seed_cache_min}（默认）"
+
     print(f"[enrich] 观影同步: {'开' if sync_watch else '关（--no-sync-douban-watch）'}", flush=True)
     print(f"[enrich] 推荐扩散（每种子至多 10 部详情）: {expand_note}", flush=True)
+    print(f"[enrich] 强制刷新种子（忽略缓存）: {force_note}", flush=True)
+    print(f"[enrich] 种子缓存判定推荐区阈值 seed_cache_min_recommend={min_note}", flush=True)
 
     bm: BrowserManager | None = BrowserManager(settings) if args.local_douban else None
     failed = 0
@@ -1343,6 +1608,8 @@ async def amain(argv: list[str] | None = None) -> int:
                     dry_run=args.dry_run,
                     sync_douban_watch=sync_watch,
                     expand_recommendations=expand_recs,
+                    force_refresh_seed=force_refresh_seeds,
+                    seed_cache_min_recommend=seed_cache_min,
                 )
             except Exception as e:
                 failed += 1

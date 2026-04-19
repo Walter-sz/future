@@ -22,6 +22,8 @@ export type MediaMonthlyWatchStat = {
   monthShortLabel: string;
   /** 该自然月内标记为已看的部数（电影+剧集合计） */
   watchedAddedCount: number;
+  /** 截至该月末，累积标记为已看的部数（电影+剧集合计） */
+  watchedCumulativeCount: number;
 };
 
 export type MediaLibraryDashboardStats = {
@@ -158,11 +160,17 @@ export async function getMonthlyWatchedAdded(): Promise<{
   }
   if (monthKeys.length === 0) monthKeys.push(endYm);
 
-  const months: MediaMonthlyWatchStat[] = monthKeys.map((ym) => ({
-    monthYm: ym,
-    monthShortLabel: ym,
-    watchedAddedCount: byMonth.get(ym) ?? 0,
-  }));
+  let cumulative = 0;
+  const months: MediaMonthlyWatchStat[] = monthKeys.map((ym) => {
+    const added = byMonth.get(ym) ?? 0;
+    cumulative += added;
+    return {
+      monthYm: ym,
+      monthShortLabel: ym,
+      watchedAddedCount: added,
+      watchedCumulativeCount: cumulative,
+    };
+  });
 
   const unw = await db
     .select({ c: sql<number>`count(*)` })

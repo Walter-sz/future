@@ -129,12 +129,15 @@ function monthlyWatchOption(monthly: MediaLibraryDashboardStats["monthlyWatch"])
   const { months, currentUnwatchedTotal } = monthly;
   const shortLabels = months.map((m) => m.monthShortLabel);
   const watchedAdded = months.map((m) => m.watchedAddedCount);
+  const watchedCumulative = months.map((m) => m.watchedCumulativeCount);
   const unwatchedInt = Math.round(Number(currentUnwatchedTotal));
   const lineData = months.map(() => unwatchedInt);
-  const y1Max = Math.max(Math.ceil(unwatchedInt * 1.08), 1);
+  const cumulativeMax = watchedCumulative.length > 0 ? watchedCumulative[watchedCumulative.length - 1] : 0;
+  const y1Max = Math.max(Math.ceil(Math.max(unwatchedInt, cumulativeMax) * 1.08), 1);
+  const cumulativeColor = "#0d9488";
 
   return {
-    color: [amber, slate],
+    color: [amber, cumulativeColor, slate],
     textStyle: { color: axisText, fontSize: 11 },
     tooltip: {
       trigger: "axis",
@@ -149,6 +152,9 @@ function monthlyWatchOption(monthly: MediaLibraryDashboardStats["monthlyWatch"])
         const bar = list.find((p: { seriesName?: string }) => p.seriesName === "当月已看") as
           | { marker?: string; value?: number }
           | undefined;
+        const cum = list.find((p: { seriesName?: string }) => p.seriesName === "累积已看") as
+          | { marker?: string; value?: number }
+          | undefined;
         const line = list.find((p: { seriesName?: string }) => p.seriesName === "当前未看总数（参考线）") as
           | { marker?: string; value?: number }
           | undefined;
@@ -156,15 +162,19 @@ function monthlyWatchOption(monthly: MediaLibraryDashboardStats["monthlyWatch"])
           bar != null
             ? `${bar.marker ?? ""} 当月已看：<b>${Math.round(Number(bar.value ?? 0))}</b> 部<br/><span style="color:#94a3b8;font-size:11px">该月标记为已看的作品数</span>`
             : "";
+        const cumLine =
+          cum != null
+            ? `<br/>${cum.marker ?? ""} 累积已看：<b>${Math.round(Number(cum.value ?? 0))}</b> 部<br/><span style="color:#94a3b8;font-size:11px">截至该月末累计标记为已看的作品数（电影+剧集）</span>`
+            : "";
         const refLine =
           line != null
             ? `<br/>${line.marker ?? ""} 当前未看总数（参考线）：<b>${Math.round(Number(line.value ?? unwatchedInt))}</b> 部<br/><span style="color:#94a3b8;font-size:11px">全库当前未看总部数，非「该月未看」</span>`
             : "";
-        return header + barLine + refLine;
+        return header + barLine + cumLine + refLine;
       },
     },
     legend: {
-      data: ["当月已看", "当前未看总数（参考线）"],
+      data: ["当月已看", "累积已看", "当前未看总数（参考线）"],
       textStyle: { color: axisText, fontSize: 10 },
       top: 0,
     },
@@ -181,7 +191,7 @@ function monthlyWatchOption(monthly: MediaLibraryDashboardStats["monthlyWatch"])
       },
       {
         type: "value",
-        name: "未看参考",
+        name: "累积 / 未看参考",
         min: 0,
         max: y1Max,
         minInterval: 1,
@@ -196,6 +206,16 @@ function monthlyWatchOption(monthly: MediaLibraryDashboardStats["monthlyWatch"])
         data: watchedAdded,
         yAxisIndex: 0,
         itemStyle: { color: amber },
+      },
+      {
+        name: "累积已看",
+        type: "line",
+        data: watchedCumulative,
+        yAxisIndex: 1,
+        smooth: true,
+        showSymbol: false,
+        lineStyle: { width: 2, color: cumulativeColor },
+        itemStyle: { color: cumulativeColor },
       },
       {
         name: "当前未看总数（参考线）",

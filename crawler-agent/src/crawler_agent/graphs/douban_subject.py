@@ -6,7 +6,7 @@ import asyncio
 import json
 import re
 import unicodedata
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, TypedDict
 from urllib.parse import quote
@@ -23,6 +23,26 @@ from crawler_agent.cover_cache import (
     create_douban_poster_response_collector,
     save_subject_cover_best_effort,
 )
+
+
+"""豆瓣账号启用下限：早于该日期的「看过日期」视为页面发行日期误解析。"""
+_SEEN_DATE_MIN_YMD = "2015-01-01"
+
+
+def _valid_seen_ymd(ymd: str | None) -> bool:
+    """seen 日期合法性：形如 ``YYYY-MM-DD``、不早于账号下限、不晚于今天。"""
+    if not ymd or not isinstance(ymd, str):
+        return False
+    m = re.match(r"^(\d{4})-(\d{2})-(\d{2})$", ymd.strip())
+    if not m:
+        return False
+    try:
+        d = datetime(int(m.group(1)), int(m.group(2)), int(m.group(3)), tzinfo=timezone.utc)
+    except ValueError:
+        return False
+    if ymd < _SEEN_DATE_MIN_YMD:
+        return False
+    return d <= datetime.now(timezone.utc) + timedelta(days=1)
 
 
 def _parse_douban_seen_date_from_text(s: str) -> str | None:
@@ -54,21 +74,26 @@ def _parse_douban_seen_date_from_text(s: str) -> str | None:
 
 
 def _iso_date_near_seen_movie_phrase(s: str) -> str | None:
-    """在「我看过这部电影」附近取 ``YYYY-MM-DD``（与页面上紧挨日期常见布局一致）。"""
+    """在「我看过这部电影」附近取 ``YYYY-MM-DD``。
+
+    窗口足够贴近关键字，避免把详情页别处（发行日期、评论日期等）误当作观看日。
+    """
     if not s or "我看过这部电影" not in s:
         return None
     i = s.find("我看过这部电影")
-    window = s[max(0, i - 160) : min(len(s), i + 320)]
-    m = re.search(r"(20\d{2}|19\d{2})-(\d{2})-(\d{2})", window)
-    if m:
+    window = s[max(0, i - 40) : min(len(s), i + 80)]
+    for pattern in (
+        r"(20\d{2})-(\d{2})-(\d{2})",
+        r"(20\d{2})-(\d{1,2})-(\d{1,2})",
+    ):
+        m = re.search(pattern, window)
+        if not m:
+            continue
         y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
         if 1 <= mo <= 12 and 1 <= d <= 31:
-            return f"{y:04d}-{mo:02d}-{d:02d}"
-    m = re.search(r"(20\d{2}|19\d{2})-(\d{1,2})-(\d{1,2})", window)
-    if m:
-        y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
-        if 1 <= mo <= 12 and 1 <= d <= 31:
-            return f"{y:04d}-{mo:02d}-{d:02d}"
+            ymd = f"{y:04d}-{mo:02d}-{d:02d}"
+            if _valid_seen_ymd(ymd):
+                return ymd
     return None
 
 
@@ -175,7 +200,7 @@ def watch_meta_from_subject_raw(raw: dict[str, Any]) -> dict[str, Any]:
                 "doubanUserCollectStatus": "collect",
             }
             d = _first_seen_date_from_interest_json(ij)
-            if d:
+            if d and _valid_seen_ymd(d):
                 api["doubanSeenAt"] = d
         elif status in ("wish", "do"):
             api = {"doubanUserSeen": False, "doubanUserCollectStatus": status}
@@ -199,7 +224,7 @@ def watch_meta_from_subject_raw(raw: dict[str, Any]) -> dict[str, Any]:
         ):
             dom = {"doubanUserSeen": True, "doubanUserCollectStatus": "collect"}
             d3 = _iso_date_near_seen_movie_phrase(combined) or _parse_douban_seen_date_from_text(combined)
-            if d3:
+            if d3 and _valid_seen_ymd(d3):
                 dom["doubanSeenAt"] = d3
 
     if api.get("doubanUserCollectStatus") or api.get("doubanUserSeen") is not None:
@@ -210,7 +235,7 @@ def watch_meta_from_subject_raw(raw: dict[str, Any]) -> dict[str, Any]:
                 or _parse_douban_seen_date_from_text(combined)
                 or _parse_douban_seen_date_from_text(plain)
             )
-            if d2:
+            if d2 and _valid_seen_ymd(d2):
                 out["doubanSeenAt"] = d2
         return out
 
@@ -220,7 +245,7 @@ def watch_meta_from_subject_raw(raw: dict[str, Any]) -> dict[str, Any]:
             or _parse_douban_seen_date_from_text(combined)
             or _parse_douban_seen_date_from_text(plain)
         )
-        if d2:
+        if d2 and _valid_seen_ymd(d2):
             dom["doubanSeenAt"] = d2
     return dom
 
