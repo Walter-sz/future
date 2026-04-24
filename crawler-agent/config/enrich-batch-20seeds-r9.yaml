@@ -1,0 +1,69 @@
+# 第 9 批：高分占位电影种子，douban_rating ≥ 8，只挑尚未扩散过的（已入库推荐 < 30%）
+# 排除上一批（r8）跑过的 20 条；一跳扩散 expand_recommendations=true
+# 运行：
+#   cd crawler-agent && source .venv/bin/activate
+#   WALTER_DATA_DIR=../walter_data python -m crawler_agent.tools.enrich_library_douban \
+#     --config config/enrich-batch-20seeds-r9.yaml --local-douban
+
+expand_recommendations: true
+entries:
+- search_title: 久石让在武道馆：与宫崎骏动画一同走过的25年 久石譲
+  nas_library_path: meta:douban:4167113
+  kind_hint: movie
+- search_title: 泰勒·斯威夫特：1989世界巡回演唱会
+  nas_library_path: meta:douban:26692640
+  kind_hint: movie
+- search_title: 火车进站
+  nas_library_path: meta:douban:1867742
+  kind_hint: movie
+- search_title: 登天之路：西藏开山大运输 天空の一本道～秘境・チベット開山大運搬～
+  nas_library_path: meta:douban:6730005
+  kind_hint: movie
+- search_title: Jason
+  nas_library_path: meta:douban:5157946
+  kind_hint: movie
+- search_title: 聆听阿黛尔
+  nas_library_path: meta:douban:35675055
+  kind_hint: movie
+- search_title: 坏浪漫
+  nas_library_path: meta:douban:35093133
+  kind_hint: movie
+- search_title: Lady
+  nas_library_path: meta:douban:7001285
+  kind_hint: movie
+- search_title: 应许天堂
+  nas_library_path: meta:douban:27091219
+  kind_hint: movie
+- search_title: 国家地理：摄影师透过镜头看世界
+  nas_library_path: meta:douban:3871225
+  kind_hint: movie
+- search_title: AFI终身成就奖：向梅丽尔·斯特里普致敬
+  nas_library_path: meta:douban:5217322
+  kind_hint: movie
+- search_title: 海洋：我们的蓝色星球
+  nas_library_path: meta:douban:30446850
+  kind_hint: movie
+- search_title: 野性的巴尔干
+  nas_library_path: meta:douban:6781964
+  kind_hint: movie
+- search_title: 水下人生
+  nas_library_path: meta:douban:27043441
+  kind_hint: movie
+- search_title: 佩里亚斯与梅丽桑德
+  nas_library_path: meta:douban:1798094
+  kind_hint: movie
+- search_title: 幸福的旁边 幸福的旁邊
+  nas_library_path: meta:douban:30391288
+  kind_hint: movie
+- search_title: 喜马拉雅, 天路
+  nas_library_path: meta:douban:5398757
+  kind_hint: movie
+- search_title: 西藏:盐程万里
+  nas_library_path: meta:douban:1461750
+  kind_hint: movie
+- search_title: 在陆地上
+  nas_library_path: meta:douban:1437391
+  kind_hint: movie
+- search_title: 美国哈兰县
+  nas_library_path: meta:douban:1294724
+  kind_hint: movie

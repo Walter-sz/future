@@ -63,6 +63,8 @@ export const mediaWork = sqliteTable(
     tmdbId: integer("tmdb_id"),
     tmdbRating: real("tmdb_rating"),
     doubanRating: real("douban_rating"),
+    /** 豆瓣评分人数（`.rating_people span` 解析所得）；可空表示尚未抓取 */
+    doubanRatingCount: integer("douban_rating_count"),
     /** 豆瓣条目数字 id；推荐去重/外链用，可空 */
     doubanSubjectId: text("douban_subject_id"),
     matchStatus: text("match_status").notNull().default("unresolved"),

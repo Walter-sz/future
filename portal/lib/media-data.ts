@@ -49,6 +49,8 @@ export type MediaWorkCard = {
   year: number | null;
   tmdbRating: number | null;
   doubanRating: number | null;
+  /** 豆瓣评分人数，可空 */
+  doubanRatingCount: number | null;
   /** 豆瓣 subject 数字 id，可空 */
   doubanSubjectId?: string | null;
   summary: string | null;
@@ -152,6 +154,7 @@ function workToCard(
     year: r.year,
     tmdbRating: r.tmdbRating,
     doubanRating: r.doubanRating,
+    doubanRatingCount: r.doubanRatingCount ?? null,
     ...(r.doubanSubjectId?.trim() ? { doubanSubjectId: r.doubanSubjectId.trim() } : {}),
     summary: r.summary,
     posterUrl: r.posterUrl,

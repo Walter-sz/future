@@ -6,9 +6,10 @@
     "dev": "tsx server.ts"
   },
   "dependencies": {
-    "dotenv": "^16.4.7",
+    "@google/genai": "^0.9.0",
     "@langchain/langgraph": "^0.2.39",
-    "better-sqlite3": "^11.8.1"
+    "better-sqlite3": "^11.8.1",
+    "dotenv": "^16.4.7"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",

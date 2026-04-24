@@ -49,6 +49,20 @@ def app_db_path() -> Path:
     return walter_data_dir() / "app.db"
 
 
+def _ensure_schema_migrations(conn: sqlite3.Connection) -> None:
+    """写前补齐 Python 这侧依赖的新列；幂等，失败不抛（Portal 首次启动也会补）。"""
+    try:
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(media_work)").fetchall()}
+    except sqlite3.Error:
+        return
+    if "douban_rating_count" not in cols:
+        try:
+            conn.execute("ALTER TABLE media_work ADD COLUMN douban_rating_count INTEGER")
+            conn.commit()
+        except sqlite3.Error:
+            pass
+
+
 def metadata_dir() -> Path:
     d = walter_data_dir() / "media" / "metadata"
     d.mkdir(parents=True, exist_ok=True)
@@ -274,6 +288,17 @@ def subject_data_to_update(
         if sid.isdigit() and len(sid) >= 5:
             douban_subject_id = sid
 
+    rating_count_raw = sd.get("ratingCount")
+    rating_count_val: int | None
+    if isinstance(rating_count_raw, bool):
+        rating_count_val = None
+    elif isinstance(rating_count_raw, int) and rating_count_raw >= 0:
+        rating_count_val = rating_count_raw
+    elif isinstance(rating_count_raw, str) and rating_count_raw.strip().isdigit():
+        rating_count_val = int(rating_count_raw.strip())
+    else:
+        rating_count_val = None
+
     out: dict[str, Any] = {
         "title_zh": zh or "",
         "title_en": en or "",
@@ -283,6 +308,7 @@ def subject_data_to_update(
         "country": ", ".join(str(x) for x in countries) if countries else None,
         "language": ", ".join(str(x) for x in languages) if languages else None,
         "douban_rating": sd.get("doubanRating"),
+        "douban_rating_count": rating_count_val,
         "summary": sd.get("summary") if isinstance(sd.get("summary"), str) else None,
         "directors_json": json.dumps([str(x) for x in directors], ensure_ascii=False),
         "actors_json": json.dumps([str(x) for x in casts], ensure_ascii=False),
@@ -926,17 +952,18 @@ async def _expand_one_recommendation(
 
     conn = sqlite3.connect(str(dbp))
     try:
+        _ensure_schema_migrations(conn)
         conn.execute(
             """
             INSERT OR IGNORE INTO media_work (
               title_zh, title_en, normalized_title, media_type, year,
-              country, language, douban_rating, summary,
+              country, language, douban_rating, douban_rating_count, summary,
               directors_json, actors_json, poster_url,
               match_status, search_text, douban_subject_id,
               watch_status, watched_at,
               nas_library_path, metadata_path,
               created_at, updated_at
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             (
                 patch["title_zh"],
@@ -947,6 +974,7 @@ async def _expand_one_recommendation(
                 patch["country"],
                 patch["language"],
                 patch["douban_rating"],
+                patch.get("douban_rating_count"),
                 patch["summary"],
                 patch["directors_json"],
                 patch["actors_json"],
@@ -1227,6 +1255,7 @@ async def process_one(
 
         conn = sqlite3.connect(str(dbp))
         try:
+            _ensure_schema_migrations(conn)
             new_sid = patch.get("douban_subject_id")
             if new_sid:
                 other = conn.execute(
@@ -1281,6 +1310,7 @@ async def process_one(
                   country = ?,
                   language = ?,
                   douban_rating = ?,
+                  douban_rating_count = COALESCE(?, douban_rating_count),
                   summary = ?,
                   directors_json = ?,
                   actors_json = ?,
@@ -1303,6 +1333,7 @@ async def process_one(
                     patch["country"],
                     patch["language"],
                     patch["douban_rating"],
+                    patch.get("douban_rating_count"),
                     patch["summary"],
                     patch["directors_json"],
                     patch["actors_json"],

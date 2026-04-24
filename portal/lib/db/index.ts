@@ -78,6 +78,19 @@ function migrateMediaWorkDoubanSubjectId(raw: Database.Database) {
   }
 }
 
+function migrateMediaWorkDoubanRatingCount(raw: Database.Database) {
+  try {
+    const rows = raw.prepare("PRAGMA table_info(media_work)").all() as { name: string }[];
+    if (rows.length === 0) return;
+    const names = new Set(rows.map((r) => r.name));
+    if (!names.has("douban_rating_count")) {
+      raw.exec(`ALTER TABLE media_work ADD COLUMN douban_rating_count INTEGER`);
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
 const MEDIA_TAG_SEED_ROWS: [string, string][] = [
   ["action", "动作"],
   ["comedy", "喜剧"],
@@ -198,6 +211,7 @@ function ensureSchema(raw: Database.Database) {
       tmdb_id INTEGER,
       tmdb_rating REAL,
       douban_rating REAL,
+      douban_rating_count INTEGER,
       douban_subject_id TEXT,
       match_status TEXT NOT NULL DEFAULT 'unresolved',
       summary TEXT,
@@ -259,6 +273,7 @@ function ensureSchema(raw: Database.Database) {
   migrateMediaWorkWatchColumns(raw);
   migrateMediaWorkUserMetaOverridesColumn(raw);
   migrateMediaWorkDoubanSubjectId(raw);
+  migrateMediaWorkDoubanRatingCount(raw);
   seedMediaTags(raw);
   seedStudyDefaultTab(raw);
   const now = Date.now();

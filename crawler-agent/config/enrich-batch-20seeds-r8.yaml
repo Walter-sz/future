@@ -1,0 +1,69 @@
+# 第 8 批：高分占位电影种子，douban_rating ≥ 8，只挑尚未扩散过的（已入库推荐 < 30%）
+# 一跳扩散：expand_recommendations=true
+# 运行：
+#   cd crawler-agent && source .venv/bin/activate
+#   WALTER_DATA_DIR=../walter_data python -m crawler_agent.tools.enrich_library_douban \
+#     --config config/enrich-batch-20seeds-r8.yaml
+
+expand_recommendations: true
+entries:
+- search_title: 霍洛维茨在莫斯科
+  nas_library_path: meta:douban:1417215
+  kind_hint: movie
+- search_title: 阿黛尔伦敦爱尔伯特音乐厅演唱会
+  nas_library_path: meta:douban:7052699
+  kind_hint: movie
+- search_title: FKA
+  nas_library_path: meta:douban:34985903
+  kind_hint: movie
+- search_title: 艾尔莎的遗产：生而自由的故事
+  nas_library_path: meta:douban:10453748
+  kind_hint: movie
+- search_title: 红气球
+  nas_library_path: meta:douban:1326038
+  kind_hint: movie
+- search_title: 演员工作室：凯特·温丝莱特
+  nas_library_path: meta:douban:2368615
+  kind_hint: movie
+- search_title: 指挥马勒
+  nas_library_path: meta:douban:1958926
+  kind_hint: movie
+- search_title: 穆特：贝多芬与我
+  nas_library_path: meta:douban:1787244
+  kind_hint: movie
+- search_title: 伯恩斯坦－音乐天才
+  nas_library_path: meta:douban:2337182
+  kind_hint: movie
+- search_title: 玛嘉烈与大卫 白咖啡男
+  nas_library_path: meta:douban:26895378
+  kind_hint: movie
+- search_title: 北极的天空下
+  nas_library_path: meta:douban:27176615
+  kind_hint: movie
+- search_title: 喜马拉雅大淘金
+  nas_library_path: meta:douban:11610684
+  kind_hint: movie
+- search_title: 埃罗·沙里宁：预见未来的建筑大师
+  nas_library_path: meta:douban:26886606
+  kind_hint: movie
+- search_title: 寻人启示
+  nas_library_path: meta:douban:24849677
+  kind_hint: movie
+- search_title: 再一次体悟
+  nas_library_path: meta:douban:26844242
+  kind_hint: movie
+- search_title: 纪录片《马勒——我弃绝尘世》
+  nas_library_path: meta:douban:1812103
+  kind_hint: movie
+- search_title: 美国女儿越南妈妈
+  nas_library_path: meta:douban:1914589
+  kind_hint: movie
+- search_title: 魔鬼攀登
+  nas_library_path: meta:douban:37055978
+  kind_hint: movie
+- search_title: 望海南
+  nas_library_path: meta:douban:10542506
+  kind_hint: movie
+- search_title: 电子游戏如何改变世界
+  nas_library_path: meta:douban:25782342
+  kind_hint: movie

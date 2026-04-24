@@ -7,6 +7,13 @@ function scoreText(score: number | null) {
   return score.toFixed(1);
 }
 
+function ratingCountText(count: number | null | undefined): string | null {
+  if (count == null || !Number.isFinite(count) || count <= 0) return null;
+  if (count >= 10000) return `${(count / 10000).toFixed(count >= 100000 ? 0 : 1)}万人`;
+  if (count >= 1000) return `${(count / 1000).toFixed(1)}千人`;
+  return `${count}人`;
+}
+
 type ListProps = {
   works: MediaWorkCard[];
   /** 从合集页进入时在详情链接上附带 ?from=，避免标记已看后 refresh 丢失 Referer */
@@ -70,6 +77,10 @@ export function MediaWorkList({ works, collectionSlug }: ListProps) {
                 TMDB {scoreText(w.tmdbRating)}
                 <span className="mx-1.5 text-slate-300">|</span>
                 豆瓣 {scoreText(w.doubanRating)}
+                {(() => {
+                  const t = ratingCountText(w.doubanRatingCount);
+                  return t ? <span className="ml-1 text-slate-400">({t})</span> : null;
+                })()}
               </p>
               {w.tags.length > 0 ? (
                 <div className="mt-2 flex max-h-14 flex-wrap gap-1 overflow-hidden">

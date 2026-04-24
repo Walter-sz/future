@@ -1,0 +1,67 @@
+# 第 10 批：高分占位电影种子，douban_rating ≥ 8，推荐区已入库 < 30%
+# 排除 r8、r9 已跑过的 40 条
+# 运行：WALTER_DATA_DIR=../walter_data python -m crawler_agent.tools.enrich_library_douban \
+#   --config config/enrich-batch-20seeds-r10.yaml --local-douban
+
+expand_recommendations: true
+entries:
+- search_title: 乔治·哈里森纪念演唱会
+  nas_library_path: meta:douban:1456839
+  kind_hint: movie
+- search_title: 红辣椒乐队：斯连堡现场演唱会
+  nas_library_path: meta:douban:2244908
+  kind_hint: movie
+- search_title: AFI终身成就奖：向阿尔帕西诺致敬
+  nas_library_path: meta:douban:4832752
+  kind_hint: movie
+- search_title: 张学友2002音乐之旅世界巡回演唱会 张学友音乐之旅Live演唱会
+  nas_library_path: meta:douban:33425526
+  kind_hint: movie
+- search_title: 时空地图
+  nas_library_path: meta:douban:10549478
+  kind_hint: movie
+- search_title: 树之女皇
+  nas_library_path: meta:douban:3333980
+  kind_hint: movie
+- search_title: 追逐珊瑚
+  nas_library_path: meta:douban:26928126
+  kind_hint: movie
+- search_title: 波西米亚人
+  nas_library_path: meta:douban:1792956
+  kind_hint: movie
+- search_title: 真师之言
+  nas_library_path: meta:douban:2147718
+  kind_hint: movie
+- search_title: 海豚礁
+  nas_library_path: meta:douban:33421961
+  kind_hint: movie
+- search_title: 生命之翼
+  nas_library_path: meta:douban:25955078
+  kind_hint: movie
+- search_title: 彻子的房间：追悼高仓健特别节目 徹子の部屋 追悼・高倉 健さん 「珠玉映像で飾らぬ素顔を偲ぶ」
+  nas_library_path: meta:douban:26270686
+  kind_hint: movie
+- search_title: 柏林迷墙
+  nas_library_path: meta:douban:4903605
+  kind_hint: movie
+- search_title: 罗宾·威廉姆斯：记忆深处
+  nas_library_path: meta:douban:27615466
+  kind_hint: movie
+- search_title: 野性的罗马尼亚
+  nas_library_path: meta:douban:30410812
+  kind_hint: movie
+- search_title: 金秋：与时间赛跑
+  nas_library_path: meta:douban:5152067
+  kind_hint: movie
+- search_title: 疯智
+  nas_library_path: meta:douban:3195035
+  kind_hint: movie
+- search_title: 沉默与黑暗的世界
+  nas_library_path: meta:douban:1401617
+  kind_hint: movie
+- search_title: 太极武当
+  nas_library_path: meta:douban:5318680
+  kind_hint: movie
+- search_title: 深海猎奇
+  nas_library_path: meta:douban:1583295
+  kind_hint: movie

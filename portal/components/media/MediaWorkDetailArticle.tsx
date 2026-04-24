@@ -21,6 +21,12 @@ function score(v: number | null) {
   return v == null ? "—" : v.toFixed(1);
 }
 
+/** 将评分人数格式化为「12,345 人」；无效值返回 null。 */
+function formatRatingCount(count: number | null | undefined): string | null {
+  if (count == null || !Number.isFinite(count) || count <= 0) return null;
+  return `${Math.round(count).toLocaleString("zh-CN")} 人`;
+}
+
 function matchStatusLabel(s: string) {
   if (s === "matched") return "TMDB 已匹配";
   if (s === "ai_inferred") return "Gemini 推测（无 TMDB 命中）";
@@ -310,6 +316,10 @@ export function MediaWorkDetailArticle({ workId, item, directors, actors, tagNam
               <p>
                 <span className={fieldLabelClass}>豆瓣评分：</span>
                 {score(item.doubanRating)}
+                {(() => {
+                  const t = formatRatingCount(item.doubanRatingCount);
+                  return t ? <span className="ml-2 text-slate-500">（{t}评价）</span> : null;
+                })()}
               </p>
             </>
           ) : (

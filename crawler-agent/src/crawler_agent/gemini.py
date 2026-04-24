@@ -1,4 +1,12 @@
-"""Shared Gemini / LangChain helpers used by X and XHS graphs."""
+"""Shared Gemini / LangChain helpers used by X and XHS graphs.
+
+.. note::
+   本模块走 ``langchain-google-genai`` → ``generativelanguage.googleapis.com``，只兼容
+   AI Studio 风格的 ``AIza...`` API Key。**Vertex Express 风格的 ``AQ.Ab8...`` Key 不可用**；
+   若需在 X/XHS 链路也切到 Vertex，需要改用 ``google-genai`` SDK（见
+   ``crawler_agent/tools/gemini_series_search.py`` 的 Vertex 调用示例）。当前豆瓣扩散
+   流程（``tools/enrich_library_douban.py``）已经迁移至 Vertex；X/XHS 后续再迁。
+"""
 
 from __future__ import annotations
 

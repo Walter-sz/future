@@ -7,6 +7,7 @@ import path from "path";
 import { randomUUID } from "crypto";
 import Database from "better-sqlite3";
 import { Annotation, StateGraph } from "@langchain/langgraph";
+import { GoogleGenAI } from "@google/genai";
 
 const execFileAsync = promisify(execFile);
 
@@ -16,12 +17,12 @@ const NAS_INBOX_ROOT = process.env.NAS_INBOX_ROOT || "/volume1/homes/影视资�
 const NAS_LIBRARY_ROOT = process.env.NAS_LIBRARY_ROOT || "/volume1/homes/影视资源库";
 const TMDB_BASE = "https://api.themoviedb.org/3";
 const TMDB_TOKEN = process.env.TMDB_API_READ_TOKEN || "";
-const GEMINI_PROXY_BASE = (process.env.GEMINI_PROXY_BASE || "http://192.168.124.24:53533").replace(
-  /\/$/,
-  ""
-);
-const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-3.1-pro-preview";
+const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-3-flash-preview";
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || "";
+/** Vertex Express 风格的 API Key（`AQ.Ab8...`）直接走 Google 官方端点；不再需要 GEMINI_PROXY_BASE。 */
+const geminiClient: GoogleGenAI | null = GEMINI_API_KEY
+  ? new GoogleGenAI({ vertexai: true, apiKey: GEMINI_API_KEY })
+  : null;
 const MEDIA_AGENT_CONCURRENCY = Math.max(1, Number(process.env.MEDIA_AGENT_CONCURRENCY || 4) || 4);
 /** 每批送进 Gemini 做目录策略的目录数；默认 32。可用 MEDIA_SCAN_POLICY_BATCH_SIZE 覆盖，范围 8–64；批越大越依赖 GEMINI_SCAN_POLICY_TIMEOUT_MS */
 const SCAN_POLICY_BATCH_SIZE = Math.min(
@@ -93,6 +94,8 @@ type ResolvedMeta = {
   tmdbId: number | null;
   tmdbRating: number | null;
   doubanRating: number | null;
+  /** 豆瓣评分人数（`.rating_people span`）；agent-media 自身不抓豆瓣，这里通常为 null */
+  doubanRatingCount?: number | null;
   /** 豆瓣 subject 数字 id，可选 */
   doubanSubjectId?: string | null;
   summary: string | null;
@@ -206,29 +209,53 @@ function parseGeminiJson(rawText: string) {
 type GeminiCallOpts = { timeoutMs?: number };
 
 async function callGeminiGenerateContent(prompt: string, model: string, opts?: GeminiCallOpts) {
-  const url = `${GEMINI_PROXY_BASE}/v1beta/models/${encodeURIComponent(
-    model
-  )}:generateContent?key=${encodeURIComponent(GEMINI_API_KEY)}`;
-  const controller = new AbortController();
+  if (!geminiClient) return { ok: false as const, reason: "no-api-key" };
   const timeoutMs = Math.max(5000, opts?.timeoutMs ?? GEMINI_TIMEOUT_MS);
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  const resp = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      contents: [{ role: "user", parts: [{ text: prompt }] }],
-      generationConfig: { temperature: 0.1, responseMimeType: "application/json" },
-    }),
-    signal: controller.signal,
-  }).catch((err) => (err && typeof err === "object" && (err as any).name === "AbortError" ? "timeout" : null));
-  clearTimeout(timer);
+
+  const generate = geminiClient.models.generateContent({
+    model,
+    contents: [{ role: "user", parts: [{ text: prompt }] }],
+    config: {
+      temperature: 0.1,
+      responseMimeType: "application/json",
+    },
+  });
+
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const timeout = new Promise<"timeout">((resolve) => {
+    timer = setTimeout(() => resolve("timeout"), timeoutMs);
+  });
+
+  let resp: Awaited<typeof generate> | "timeout";
+  try {
+    resp = await Promise.race([generate, timeout]);
+  } catch (err) {
+    if (timer) clearTimeout(timer);
+    const reason =
+      err && typeof err === "object" && "message" in err
+        ? String((err as { message?: unknown }).message).slice(0, 80) || "request-error"
+        : "request-error";
+    return { ok: false as const, reason };
+  }
+  if (timer) clearTimeout(timer);
   if (resp === "timeout") return { ok: false as const, reason: "timeout" };
-  if (!resp) return { ok: false as const, reason: "request-error" };
-  if (!resp.ok) return { ok: false as const, reason: `http-${resp.status}` };
-  const data = (await resp.json().catch(() => null)) as any;
-  const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-  if (!text || typeof text !== "string") return { ok: false as const, reason: "empty-text" };
+
+  const text = extractGeminiText(resp);
+  if (!text) return { ok: false as const, reason: "empty-text" };
   return { ok: true as const, text };
+}
+
+function extractGeminiText(resp: unknown): string {
+  if (!resp || typeof resp !== "object") return "";
+  const anyResp = resp as { text?: unknown; candidates?: Array<{ content?: { parts?: Array<{ text?: unknown }> } }> };
+  if (typeof anyResp.text === "string" && anyResp.text.trim()) return anyResp.text;
+  const parts = anyResp.candidates?.[0]?.content?.parts ?? [];
+  const chunks: string[] = [];
+  for (const part of parts) {
+    const t = part?.text;
+    if (typeof t === "string" && t) chunks.push(t);
+  }
+  return chunks.join("").trim();
 }
 
 async function normalizeTitle(rawName: string) {
@@ -1193,6 +1220,7 @@ async function resolveMetadata(candidate: Candidate): Promise<ResolvedMeta> {
     tmdbId: null,
     tmdbRating: null,
     doubanRating: null,
+    doubanRatingCount: null,
     summary: null,
     directors: [],
     actors: [],
@@ -1296,7 +1324,7 @@ function getDb() {
       CREATE TABLE IF NOT EXISTS media_work (
         id INTEGER PRIMARY KEY AUTOINCREMENT,title_zh TEXT NOT NULL,title_en TEXT NOT NULL DEFAULT '',
         normalized_title TEXT NOT NULL DEFAULT '',media_type TEXT NOT NULL DEFAULT 'movie',year INTEGER,country TEXT,language TEXT,
-        tmdb_type TEXT,tmdb_id INTEGER,tmdb_rating REAL,douban_rating REAL,douban_subject_id TEXT,match_status TEXT NOT NULL DEFAULT 'unresolved',summary TEXT,
+        tmdb_type TEXT,tmdb_id INTEGER,tmdb_rating REAL,douban_rating REAL,douban_rating_count INTEGER,douban_subject_id TEXT,match_status TEXT NOT NULL DEFAULT 'unresolved',summary TEXT,
         directors_json TEXT NOT NULL DEFAULT '[]',actors_json TEXT NOT NULL DEFAULT '[]',poster_url TEXT,nas_library_path TEXT NOT NULL,
         metadata_path TEXT,user_meta_overrides_json TEXT,search_text TEXT NOT NULL DEFAULT '',watch_status TEXT NOT NULL DEFAULT 'unwatched',watched_at INTEGER,
         created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL
@@ -1317,6 +1345,7 @@ function getDb() {
       if (!names.has("watched_at")) db.exec(`ALTER TABLE media_work ADD COLUMN watched_at INTEGER`);
       if (!names.has("user_meta_overrides_json")) db.exec(`ALTER TABLE media_work ADD COLUMN user_meta_overrides_json TEXT`);
       if (!names.has("douban_subject_id")) db.exec(`ALTER TABLE media_work ADD COLUMN douban_subject_id TEXT`);
+      if (!names.has("douban_rating_count")) db.exec(`ALTER TABLE media_work ADD COLUMN douban_rating_count INTEGER`);
       try {
         db.exec(
           `CREATE UNIQUE INDEX IF NOT EXISTS media_work_douban_subject_unique ON media_work(douban_subject_id)`
@@ -1409,11 +1438,15 @@ function upsertIndex(meta: ResolvedMeta, metadataPath: string, nasPath: string) 
     meta.doubanSubjectId != null && String(meta.doubanSubjectId).trim() !== ""
       ? String(meta.doubanSubjectId).trim()
       : null;
-  raw.prepare(`INSERT INTO media_work(title_zh,title_en,normalized_title,media_type,year,country,language,tmdb_type,tmdb_id,tmdb_rating,douban_rating,douban_subject_id,match_status,summary,directors_json,actors_json,poster_url,nas_library_path,metadata_path,user_meta_overrides_json,search_text,watch_status,watched_at,created_at,updated_at)
-    VALUES(@titleZh,@titleEn,@normalizedTitle,@mediaType,@year,@country,@language,@tmdbType,@tmdbId,@tmdbRating,@doubanRating,@doubanSubjectId,@matchStatus,@summary,@directorsJson,@actorsJson,@posterUrl,@nasLibraryPath,@metadataPath,@preservedUserMeta,@searchText,'unwatched',NULL,@now,@now)
+  const doubanRatingCount =
+    typeof meta.doubanRatingCount === "number" && Number.isFinite(meta.doubanRatingCount) && meta.doubanRatingCount >= 0
+      ? Math.round(meta.doubanRatingCount)
+      : null;
+  raw.prepare(`INSERT INTO media_work(title_zh,title_en,normalized_title,media_type,year,country,language,tmdb_type,tmdb_id,tmdb_rating,douban_rating,douban_rating_count,douban_subject_id,match_status,summary,directors_json,actors_json,poster_url,nas_library_path,metadata_path,user_meta_overrides_json,search_text,watch_status,watched_at,created_at,updated_at)
+    VALUES(@titleZh,@titleEn,@normalizedTitle,@mediaType,@year,@country,@language,@tmdbType,@tmdbId,@tmdbRating,@doubanRating,@doubanRatingCount,@doubanSubjectId,@matchStatus,@summary,@directorsJson,@actorsJson,@posterUrl,@nasLibraryPath,@metadataPath,@preservedUserMeta,@searchText,'unwatched',NULL,@now,@now)
     ON CONFLICT(nas_library_path) DO UPDATE SET
       title_zh=excluded.title_zh,title_en=excluded.title_en,normalized_title=excluded.normalized_title,media_type=excluded.media_type,year=excluded.year,country=excluded.country,language=excluded.language,
-      tmdb_type=excluded.tmdb_type,tmdb_id=excluded.tmdb_id,tmdb_rating=excluded.tmdb_rating,douban_rating=excluded.douban_rating,douban_subject_id=COALESCE(excluded.douban_subject_id, douban_subject_id),match_status=excluded.match_status,summary=excluded.summary,
+      tmdb_type=excluded.tmdb_type,tmdb_id=excluded.tmdb_id,tmdb_rating=excluded.tmdb_rating,douban_rating=excluded.douban_rating,douban_rating_count=COALESCE(excluded.douban_rating_count, douban_rating_count),douban_subject_id=COALESCE(excluded.douban_subject_id, douban_subject_id),match_status=excluded.match_status,summary=excluded.summary,
       directors_json=excluded.directors_json,actors_json=excluded.actors_json,poster_url=excluded.poster_url,metadata_path=excluded.metadata_path,user_meta_overrides_json=excluded.user_meta_overrides_json,search_text=excluded.search_text,updated_at=excluded.updated_at`).run({
     titleZh: meta.titleZh,
     titleEn: meta.titleEn || "",
@@ -1426,6 +1459,7 @@ function upsertIndex(meta: ResolvedMeta, metadataPath: string, nasPath: string) 
     tmdbId: meta.tmdbId,
     tmdbRating: meta.tmdbRating,
     doubanRating: meta.doubanRating,
+    doubanRatingCount,
     doubanSubjectId: doubanSid,
     matchStatus: meta.matchStatus,
     summary: meta.summary,
@@ -1632,6 +1666,7 @@ async function executeRun(run: RunSummary) {
             tmdbId: null,
             tmdbRating: null,
             doubanRating: null,
+            doubanRatingCount: null,
             summary: null,
             directors: [],
             actors: [],

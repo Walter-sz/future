@@ -1,13 +1,20 @@
-"""用 Gemini 将「系列/三部曲」等资源库名解析为适合豆瓣搜索的短标题（可选，依赖 GEMINI_API_KEY）。"""
+"""用 Gemini 将「系列/三部曲」等资源库名解析为适合豆瓣搜索的短标题（可选，依赖 GEMINI_API_KEY）。
+
+2026-04 起改走 **Vertex AI Express 模式**（``google-genai`` SDK），与 Vertex 风格的
+``AQ.Ab8...`` API Key 直接配合使用，不再经 ``generativelanguage.googleapis.com``。
+环境变量：
+
+- ``GEMINI_API_KEY``：必需；Vertex Express API Key（``AQ.Ab8...``）。
+- ``GEMINI_MODEL``：可选，默认 ``gemini-3-flash-preview``。
+- ``GEMINI_TIMEOUT_MS``：可选，默认 ``25000``；小于该值会按毫秒向上取整为秒。
+"""
 
 from __future__ import annotations
 
 import json
 import os
 import re
-import urllib.error
-import urllib.parse
-import urllib.request
+from typing import Any
 
 
 def series_bundle_heuristic(title: str) -> bool:
@@ -31,20 +38,31 @@ def series_bundle_heuristic(title: str) -> bool:
     return any(m in s for m in markers)
 
 
-def gemini_resolve_series_search_title(library_title: str) -> str | None:
-    """
-    返回 ``douban_search_title``：在豆瓣站内最易命中的核心片名（通常去掉「系列」「三部曲」等）。
-    无 API Key 或调用失败时返回 ``None``。
-    """
+def _vertex_genai_client() -> Any | None:
+    """构造 Vertex Express 模式下的 ``genai.Client``；无 API Key 或 SDK 未安装时返回 ``None``。"""
     key = (os.environ.get("GEMINI_API_KEY") or "").strip()
     if not key:
         return None
-    base = (os.environ.get("GEMINI_PROXY_BASE") or "https://generativelanguage.googleapis.com").rstrip("/")
-    model = (os.environ.get("GEMINI_MODEL") or "gemini-2.0-flash").strip()
-    url = (
-        f"{base}/v1beta/models/{urllib.parse.quote(model, safe='')}"
-        f":generateContent?key={urllib.parse.quote(key)}"
-    )
+    try:
+        from google import genai  # type: ignore[import-not-found]
+    except ImportError:
+        return None
+    try:
+        return genai.Client(vertexai=True, api_key=key)
+    except (ValueError, RuntimeError):
+        return None
+
+
+def gemini_resolve_series_search_title(library_title: str) -> str | None:
+    """
+    返回 ``douban_search_title``：在豆瓣站内最易命中的核心片名（通常去掉「系列」「三部曲」等）。
+    无 API Key、SDK 缺失或调用失败时返回 ``None``。
+    """
+    client = _vertex_genai_client()
+    if client is None:
+        return None
+    model = (os.environ.get("GEMINI_MODEL") or "gemini-3-flash-preview").strip()
+    timeout_s = max(8, int(os.environ.get("GEMINI_TIMEOUT_MS", "25000")) // 1000)
     prompt = "\n".join(
         [
             "你是影视资料助手。用户资源库中的条目名称可能是「系列/多部合集」风格，需要变成在豆瓣上最容易搜到正传或代表作品的短名称。",
@@ -59,32 +77,26 @@ def gemini_resolve_series_search_title(library_title: str) -> str | None:
             f"输入名称：{library_title.strip()}",
         ]
     )
-    body = json.dumps(
-        {
-            "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-            "generationConfig": {"temperature": 0.1, "responseMimeType": "application/json"},
-        },
-        ensure_ascii=False,
-    ).encode("utf-8")
-    timeout = max(8, int(os.environ.get("GEMINI_TIMEOUT_MS", "25000")) // 1000)
-    req = urllib.request.Request(
-        url,
-        data=body,
-        method="POST",
-        headers={"Content-Type": "application/json"},
-    )
+
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            raw = json.loads(resp.read().decode("utf-8", errors="replace"))
-    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError, json.JSONDecodeError):
+        from google.genai import types  # type: ignore[import-not-found]
+    except ImportError:
         return None
-    text = None
+
     try:
-        parts = raw.get("candidates", [{}])[0].get("content", {}).get("parts", [])
-        if parts and isinstance(parts[0].get("text"), str):
-            text = parts[0]["text"]
-    except (IndexError, KeyError, TypeError):
+        resp = client.models.generate_content(
+            model=model,
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                temperature=0.1,
+                response_mime_type="application/json",
+                http_options=types.HttpOptions(timeout=timeout_s * 1000),
+            ),
+        )
+    except Exception:  # noqa: BLE001 — SDK 错误形态繁多，统一吞掉走 None
         return None
+
+    text = _extract_response_text(resp)
     if not text:
         return None
     try:
@@ -100,6 +112,29 @@ def gemini_resolve_series_search_title(library_title: str) -> str | None:
     if not out or len(out) > 80:
         return None
     return out
+
+
+def _extract_response_text(resp: Any) -> str | None:
+    """兼容性地从 ``genai`` 响应里取出模型文本。"""
+    text = getattr(resp, "text", None)
+    if isinstance(text, str) and text.strip():
+        return text
+    try:
+        cands = getattr(resp, "candidates", None) or []
+        if cands:
+            content = getattr(cands[0], "content", None)
+            parts = getattr(content, "parts", None) or []
+            chunks: list[str] = []
+            for p in parts:
+                pt = getattr(p, "text", None)
+                if isinstance(pt, str) and pt:
+                    chunks.append(pt)
+            joined = "".join(chunks).strip()
+            if joined:
+                return joined
+    except (AttributeError, IndexError, TypeError):
+        return None
+    return None
 
 
 def planned_douban_search_titles(library_title: str) -> list[str]:
